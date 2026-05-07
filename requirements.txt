@@ -1,0 +1,35 @@
+fastapi[standard]
+python-multipart
+ 
+# Database
+sqlalchemy
+alembic
+supabase
+ 
+# AI/LLM
+langchain
+langchain-openai
+langgraph
+openai
+tiktoken
+
+ 
+
+# Utilities
+python-dotenv
+pydantic
+aiofiles
+
+# security
+pyjwt
+pwdlib[argon2]
+
+# Unstructured data processing
+unstructured[all-docs]
+
+
+httpx
+apscheduler
+python-dateutil
+pytz
+loguru
