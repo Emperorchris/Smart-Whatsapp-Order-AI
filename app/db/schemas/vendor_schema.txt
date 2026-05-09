@@ -1,0 +1,39 @@
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Optional, Dict, Any
+from uuid import UUID
+from datetime import datetime
+
+
+class VendorCreate(BaseModel):
+    name: str
+    slug: str
+    whatsapp_number: str
+    description: Optional[str] = None
+    routing_keywords: Optional[list] = Field(default_factory=list)
+    settings: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    active: bool = True
+
+
+class VendorUpdate(BaseModel):
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    whatsapp_number: Optional[str] = None
+    description: Optional[str] = None
+    routing_keywords: Optional[list] = None
+    settings: Optional[Dict[str, Any]] = None
+    active: Optional[bool] = None
+
+
+class VendorResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    slug: str
+    whatsapp_number: str
+    description: Optional[str] = None
+    routing_keywords: Optional[list] = None
+    settings: Optional[Dict[str, Any]] = None
+    active: bool
+    created_at: datetime
+    updated_at: datetime

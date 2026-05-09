@@ -5,6 +5,8 @@ python-multipart
 sqlalchemy
 alembic
 supabase
+asyncpg 
+psycopg2-binary
  
 # AI/LLM
 langchain
@@ -18,6 +20,8 @@ tiktoken
 # Utilities
 python-dotenv
 pydantic
+pydantic[email]
+
 aiofiles
 
 # security
