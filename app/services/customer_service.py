@@ -8,6 +8,7 @@ def create_customer(db: Session, customer_data: customers_schema.CustomerSchema)
     new_customer = customer_model.Customer(
         name=customer_data.name,
         whatsapp_number=customer_data.whatsapp_number,
+        email=customer_data.email,
         display_name=customer_data.display_name,
         extra_metadata=customer_data.extra_metadata
     )
