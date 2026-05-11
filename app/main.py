@@ -1,12 +1,17 @@
 from fastapi import FastAPI, Request, Query, HTTPException
 from .core import Config
+from .core.exceptions import register_exception_handlers
+from .api.router import api_router
 
 app = FastAPI()
+
+register_exception_handlers(app)
+app.include_router(api_router, prefix="/api/v1")
 
 
 @app.get("/")
 def root():
-    return {"message": "Welcome to AI Knowledge Base API"}
+    return {"message": "Welcome to the WhatsApp Commerce API!"}
 
 
 @app.get("/health")
