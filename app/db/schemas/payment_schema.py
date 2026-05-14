@@ -4,12 +4,14 @@ from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
 
+from ...core.config import Config
+
 
 class PaymentSchema(BaseModel):
     order_id: UUID
     payment_reference: str
     amount: Decimal
-    currency: str = "NGN"
+    currency: str = Config.DEFAULT_CURRENCY
     status: str = "pending"
     payment_url: Optional[str] = None
 

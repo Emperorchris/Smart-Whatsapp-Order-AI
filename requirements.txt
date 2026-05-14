@@ -30,10 +30,12 @@ pwdlib[argon2]
 
 # Unstructured data processing
 unstructured[all-docs]
+cloudinary
 
 
 httpx
 apscheduler
+twilio
 python-dateutil
 pytz
 loguru

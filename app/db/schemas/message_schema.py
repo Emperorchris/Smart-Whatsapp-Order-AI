@@ -6,6 +6,8 @@ from datetime import datetime
 
 class MessageSchema(BaseModel):
     conversation_id: UUID
+    sender_type: Optional[str] = None
+    staff_id: Optional[UUID] = None
     direction: str
     message_type: str
     content: Optional[str] = None

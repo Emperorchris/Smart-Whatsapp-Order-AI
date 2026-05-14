@@ -39,6 +39,38 @@ def get_conversations_by_customer_id(db: Session, customer_id: str) -> list[conv
     return [conversation_schema.ConversationResponse.model_validate(c) for c in conversations]
 
 
+def disable_ai(db: Session, conversation_id: str) -> conversation_schema.ConversationResponse:
+    conversation = db.query(conversation_model.Conversation).filter(
+        conversation_model.Conversation.id == conversation_id).first()
+
+    if not conversation:
+        raise exceptions.NotFoundException("Conversation not found.")
+
+    conversation.ai_enabled = False
+    conversation.handoff_to_human = True
+    
+    db.commit()
+    db.refresh(conversation)
+
+    return conversation_schema.ConversationResponse.model_validate(conversation)
+
+
+def enable_ai(db: Session, conversation_id: str) -> conversation_schema.ConversationResponse:
+    conversation = db.query(conversation_model.Conversation).filter(
+        conversation_model.Conversation.id == conversation_id).first()
+
+    if not conversation:
+        raise exceptions.NotFoundException("Conversation not found.")
+
+    conversation.ai_enabled = True
+    conversation.handoff_to_human = False
+    
+    db.commit()
+    db.refresh(conversation)
+
+    return conversation_schema.ConversationResponse.model_validate(conversation)
+
+
 def update_conversation(db: Session, conversation_id: str, conversation_data: conversation_schema.ConversationSchema) -> conversation_schema.ConversationResponse:
     conversation = db.query(conversation_model.Conversation).filter(
         conversation_model.Conversation.id == conversation_id).first()

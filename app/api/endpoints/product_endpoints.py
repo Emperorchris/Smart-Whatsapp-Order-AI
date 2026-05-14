@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from typing import Optional
+from decimal import Decimal
+from fastapi import APIRouter, Query
 from ...core.dependencies import DBSession
 from ...services import product_service
 from ...db.schemas import product_schema
@@ -14,6 +16,18 @@ def create_product(product_data: product_schema.ProductSchema, db: DBSession):
 @product_router.get("/", response_model=list[product_schema.ProductResponse])
 def get_all_products(db: DBSession):
     return product_service.get_all_products(db)
+
+
+@product_router.get("/search", response_model=list[product_schema.ProductResponse])
+def search_products(
+    db: DBSession,
+    name: Optional[str] = Query(None, description="Search by product name"),
+    category_id: Optional[str] = Query(None, description="Filter by category ID"),
+    min_price: Optional[Decimal] = Query(None, description="Minimum price"),
+    max_price: Optional[Decimal] = Query(None, description="Maximum price"),
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+):
+    return product_service.search_products(db, name, category_id, min_price, max_price, is_active)
 
 
 @product_router.get("/{product_id}", response_model=product_schema.ProductResponse)

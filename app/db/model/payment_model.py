@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import UUID, Column, Integer, String, Text, DateTime, ForeignKey, Numeric
 from ..base import Base
 from ...core import utils
+from ...core.config import Config
 
 class Payment(Base):
     __tablename__ = "payments"
@@ -15,7 +16,7 @@ class Payment(Base):
 
     amount = Column(Numeric(12, 2))
 
-    currency = Column(String, default="NGN")
+    currency = Column(String, default=Config.DEFAULT_CURRENCY)
 
     status = Column(String, default=utils.PaymentStatus.PENDING.value)
     # pending/success/failed
