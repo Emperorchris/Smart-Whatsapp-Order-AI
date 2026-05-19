@@ -9,6 +9,7 @@ class StaffCreate(BaseModel):
     name: str
     email: EmailStr
     phone_number: Optional[str] = None
+    whatsapp_number: Optional[str] = None
     role: str = utils.StaffRole.SUPPORT.value
     password: str
 
@@ -17,6 +18,7 @@ class StaffUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
+    whatsapp_number: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -33,6 +35,7 @@ class StaffResponse(BaseModel):
     name: str
     email: EmailStr
     phone_number: Optional[str] = None
+    whatsapp_number: Optional[str] = None
     role: str
     is_active: bool
     created_at: datetime

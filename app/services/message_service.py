@@ -14,9 +14,13 @@ def create_message(db: Session, message_data: message_schema.MessageSchema) -> m
 
     new_message = message_model.Message(
         conversation_id=message_data.conversation_id,
+        sender_type=message_data.sender_type,
+        staff_id=message_data.staff_id,
         direction=message_data.direction,
         message_type=message_data.message_type,
         content=message_data.content,
+        media_urls=message_data.media_urls,
+        status=message_data.status,
         whatsapp_message_id=message_data.whatsapp_message_id
     )
 
@@ -74,11 +78,29 @@ def update_message(db: Session, message_id: str, message_data: message_schema.Me
             raise exceptions.ConflictException("WhatsApp message ID is already taken by another message.")
 
     message.conversation_id = message_data.conversation_id
+    message.sender_type = message_data.sender_type
+    message.staff_id = message_data.staff_id
     message.direction = message_data.direction
     message.message_type = message_data.message_type
     message.content = message_data.content
+    message.media_urls = message_data.media_urls
+    message.status = message_data.status
     message.whatsapp_message_id = message_data.whatsapp_message_id
 
+    db.commit()
+    db.refresh(message)
+
+    return message_schema.MessageResponse.model_validate(message)
+
+
+def update_message_status(db: Session, message_id: str, status: str) -> message_schema.MessageResponse:
+    message = db.query(message_model.Message).filter(
+        message_model.Message.id == message_id).first()
+
+    if not message:
+        raise exceptions.NotFoundException("Message not found.")
+
+    message.status = status
     db.commit()
     db.refresh(message)
 

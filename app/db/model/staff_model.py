@@ -3,6 +3,7 @@ from sqlalchemy import Column, String, DateTime, Boolean, Uuid
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 import uuid
+from ...core import utils
 
 
 class Staff(Base):
@@ -13,8 +14,10 @@ class Staff(Base):
     name = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=False)
     phone_number = Column(String, nullable=True)
-    # e.g., "admin", "support", "sales"
-    role = Column(String, nullable=False, default="support")
+    whatsapp_number = Column(String, unique=True, nullable=True)
+
+    role = Column(String, nullable=False,
+                  default=utils.StaffRole.SUPPORT.value)
 
     is_active = Column(Boolean, default=True)
     password_hash = Column(String, nullable=False)  # Store hashed passwords

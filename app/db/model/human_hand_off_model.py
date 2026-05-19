@@ -20,7 +20,7 @@ class HumanHandOff(Base):
     )
     staff = relationship("Staff", back_populates="human_hand_offs", foreign_keys=[assigned_staff_id])
     conversation = relationship("Conversation", back_populates="human_hand_offs", foreign_keys=[conversation_id])
-    status = Column(String, nullable=False, default=utils.HandOffStatus.REQUESTED.value)
+    status = Column(String, nullable=False, default=utils.HandOffStatus.PENDING.value)
     claimed_at = Column(DateTime, nullable=True)
     requested_at = Column(
         DateTime, nullable=False, default=datetime.now(tz=timezone.utc)

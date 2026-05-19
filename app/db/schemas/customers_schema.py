@@ -4,7 +4,7 @@ from uuid import UUID
 
 
 class CustomerSchema(BaseModel):
-    name: str
+    name: Optional[str] = None
     whatsapp_number: str
     email: Optional[EmailStr] = None
     display_name: Optional[str] = None
@@ -13,7 +13,7 @@ class CustomerSchema(BaseModel):
 
 class CustomerResponse(CustomerSchema):
     id: UUID
-    name: str
+    name: Optional[str] = None
     whatsapp_number: str
     email: Optional[EmailStr] = None
     display_name: Optional[str] = None

@@ -12,6 +12,8 @@ from .endpoints.cart_endpoints import cart_router
 from .endpoints.order_endpoints import order_router
 from .endpoints.payment_endpoints import payment_router
 from .endpoints.processed_webhook_endpoints import webhook_router
+from .endpoints.handoff_endpoints import handoff_router
+from .endpoints.whatsapp_webhook_endpoints import whatsapp_webhook_router
 from .endpoints.bank_account_endpoints import bank_account_router
 
 api_router = APIRouter(prefix="/api/v1")
@@ -30,3 +32,5 @@ api_router.include_router(order_router)
 api_router.include_router(payment_router)
 api_router.include_router(webhook_router)
 api_router.include_router(bank_account_router)
+api_router.include_router(whatsapp_webhook_router)
+api_router.include_router(handoff_router)

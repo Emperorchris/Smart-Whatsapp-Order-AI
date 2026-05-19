@@ -1,11 +1,13 @@
 from ..graph.agent_state import AgentState
-from ...services import product_service
+from ...services import product_service, whatsapp_service, message_service
 from sqlalchemy.orm import Session
 from langchain_core.messages import AIMessage, HumanMessage
 from ...core.config import Config
 from langchain_openai import ChatOpenAI
 from ...db.schemas import product_schema
+from ...db.schemas.message_schema import MessageSchema
 from ...services.product_variant_service import get_variants_by_product_id
+from ...core.utils import MessageSenderType, MessageDirection, MessageType, MessageStatus
 
 
 llm = ChatOpenAI(model=Config.OPENAI_LLM_MODEL, temperature=0)
@@ -18,7 +20,7 @@ def product_lookup_node(state: AgentState, db: Session) -> AgentState:
     # For simplicity, we assume the product name is mentioned in the latest message
     latest_message = state["messages"][-1].content if state["messages"] else ""
 
-    structured_llm_output = structured_llm.invoke(
+    structured_llm_output: product_schema.ProductSearchParams = structured_llm.invoke(
         [HumanMessage(content=latest_message)])
 
     products = product_service.search_products(
@@ -51,6 +53,14 @@ def product_lookup_node(state: AgentState, db: Session) -> AgentState:
         
         reply = "Here are the products I found:\n\n" + "\n\n".join(lines)
    
+    # Collect all images from found products
+    # media_urls = []
+    # if products:
+    #     for p in products[:5]:
+    #         if p.image_urls:
+    #             media_urls.extend(p.image_urls)
+
+
     return {
         "messages": [AIMessage(content=reply)],
         "search_results": products

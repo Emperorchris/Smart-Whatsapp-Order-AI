@@ -13,6 +13,8 @@ class MessageStatus(enum.Enum):
     SENT = "sent"
     DELIVERED = "delivered"
     READ = "read"
+    FAILED = "failed"
+    UNDELIVERED = "undelivered"
 
 
 class ConversationStatus(enum.Enum):
@@ -95,6 +97,7 @@ class CartActionType(enum.Enum):
 
 class HandOffStatus(enum.Enum):
     NONE = "none"
+    PENDING = "pending"
     REQUESTED = "requested"
     ACTIVE = "active"
     RESOLVED = "resolved"
@@ -119,3 +122,21 @@ class StaffConversationCommand(enum.Enum):
     QUEUE = "#queue"
     SKIP = "#skip"
     INFO = "#info"
+    
+    
+    
+class GraphNodeName(enum.Enum):
+    CART_NODE = "cart_node"
+    CUSTOMER_NODE = "customer_node"
+    HANDOFF_NODE = "handoff_node"
+    PRODUCT_LOOKUP_NODE = "product_lookup_node"
+    ROUTER_NODE = "router_node"
+    ROUTE_BY_INTENT = "route_by_intent_node"
+    
+    
+class IntentName(enum.Enum):
+    PRODUCT_INQUIRY = "product_inquiry"
+    CART = "cart"
+    ORDER = "order"
+    HANDOFF = "handoff"
+    CHITCHAT = "chitchat"

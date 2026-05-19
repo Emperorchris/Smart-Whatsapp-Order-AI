@@ -3,13 +3,13 @@ from sqlalchemy.orm import Session
 from langchain_core.messages import AIMessage, HumanMessage
 from ...core.config import Config
 from langchain_openai import ChatOpenAI
-from ...services import human_handoff_service, conversation_service
+from ...services import human_handoff_service, conversation_service, whatsapp_service
 from ...db.schemas import human_hand_off_schema
 from ...core.utils import HandOffStatus, HandOffTriggeredBy
 from ...db.model import human_hand_off_model
 
 
-def handoff_node(state: AgentState, db: Session) -> AgentState:
+def handoff_node(state: AgentState, notification_message: str | None, db: Session) -> AgentState:
     latest_message = state["messages"][-1].content if state["messages"] else ""
     conversation_id = state["conversation_id"]
     customer_id = state["customer_id"]
@@ -19,13 +19,20 @@ def handoff_node(state: AgentState, db: Session) -> AgentState:
         triggered_by=HandOffTriggeredBy.CUSTOMER.value,
         reason=state["handoff_reason"] if "handoff_reason" in state else "AI could not handle the request",
         assigned_staff_id=None,
-        status=HandOffStatus.REQUESTED.value
+        status=HandOffStatus.PENDING.value
     )
     human_handoff_service.create_handoff(db, handoff_data)
-    
-    
-    
-    conversation_service.disable_ai(db, conversation_id)
+    conversation_service.start_handoff(
+        db,
+        conversation_id,
+        reason=handoff_data.reason
+    )
+
+    whatsapp_service.notify_all_staff(
+        db=db,
+        message=notification_message or f"Customer {customer_id} has been transferred to a human agent. Reason: {handoff_data.reason}",
+        customer_id=customer_id,
+    )
 
     reply = (
         "I'm connecting you with a human agent right now. "

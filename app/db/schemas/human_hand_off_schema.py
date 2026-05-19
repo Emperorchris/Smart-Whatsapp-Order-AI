@@ -10,7 +10,8 @@ class HumanHandOffSchema(BaseModel):
     triggered_by: str = utils.HandOffTriggeredBy.AI.value
     reason: Optional[str] = None
     assigned_staff_id: Optional[UUID] = None
-    status: str = utils.HandOffStatus.REQUESTED.value
+    status: str = utils.HandOffStatus.PENDING.value
+    claimed_at: Optional[datetime] = None
     requested_at: Optional[datetime] = None
     resolved_at: Optional[datetime] = None
 

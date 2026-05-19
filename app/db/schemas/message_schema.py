@@ -11,6 +11,8 @@ class MessageSchema(BaseModel):
     direction: str
     message_type: str
     content: Optional[str] = None
+    media_urls: Optional[list[str]] = None
+    status: Optional[str] = None
     whatsapp_message_id: Optional[str] = None
 
 

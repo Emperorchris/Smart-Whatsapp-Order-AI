@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import uuid
 from sqlalchemy import UUID, Column, Integer, String, Text, DateTime, ForeignKey, Numeric
+from sqlalchemy.orm import relationship
 from ..base import Base
 from ...core import utils
 
@@ -26,6 +27,8 @@ class Order(Base):
     payment_status = Column(String, default=utils.PaymentStatus.PENDING.value)
 
     delivery_address = Column(Text)
+    
+    order_items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
 
     created_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc))
     updated_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc), onupdate=datetime.now(tz=timezone.utc))

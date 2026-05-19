@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy import Column, String, DateTime, ForeignKey, Uuid, Text
+from sqlalchemy import Column, String, DateTime, ForeignKey, Uuid, Text, JSON
 from ..base import Base
 from ...core import utils
 
@@ -20,6 +20,8 @@ class Message(Base):
     message_type = Column(String, nullable=False,
                           default=utils.MessageType.TEXT.value)
     content = Column(Text)
+    media_urls = Column(JSON, nullable=True)
+    status = Column(String, nullable=True, default=utils.MessageStatus.SENT.value)
     whatsapp_message_id = Column(String, unique=True)
     created_at = Column(DateTime, default=datetime.now(tz=timezone.utc))
     updated_at = Column(DateTime, default=datetime.now(
