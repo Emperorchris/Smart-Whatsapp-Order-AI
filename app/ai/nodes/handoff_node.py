@@ -1,15 +1,13 @@
 from ..graph.agent_state import AgentState
-from sqlalchemy.orm import Session
-from langchain_core.messages import AIMessage, HumanMessage
-from ...core.config import Config
-from langchain_openai import ChatOpenAI
+from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import AIMessage
 from ...services import human_handoff_service, conversation_service, whatsapp_service
 from ...db.schemas import human_hand_off_schema
 from ...core.utils import HandOffStatus, HandOffTriggeredBy
-from ...db.model import human_hand_off_model
 
 
-def handoff_node(state: AgentState, notification_message: str | None, db: Session) -> AgentState:
+def handoff_node(state: AgentState, config: RunnableConfig) -> AgentState:
+    db = config["configurable"]["db"]
     latest_message = state["messages"][-1].content if state["messages"] else ""
     conversation_id = state["conversation_id"]
     customer_id = state["customer_id"]
@@ -30,7 +28,7 @@ def handoff_node(state: AgentState, notification_message: str | None, db: Sessio
 
     whatsapp_service.notify_all_staff(
         db=db,
-        message=notification_message or f"Customer {customer_id} has been transferred to a human agent. Reason: {handoff_data.reason}",
+        message=f"Customer {customer_id} has been transferred to a human agent. Reason: {handoff_data.reason}",
         customer_id=customer_id,
     )
 

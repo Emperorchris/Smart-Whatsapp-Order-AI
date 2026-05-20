@@ -1,4 +1,5 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from fastapi.security import OAuth2PasswordRequestForm
 from ...core.dependencies import DBSession
 from ...services import auth_service
 from ...db.schemas import staff_schema
@@ -7,7 +8,8 @@ auth_router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
 @auth_router.post("/login", response_model=staff_schema.TokenResponse)
-def login(credentials: staff_schema.StaffLoginSchema, db: DBSession):
+def login(db: DBSession, form_data: OAuth2PasswordRequestForm = Depends()):
+    credentials = staff_schema.StaffLoginSchema(email=form_data.username, password=form_data.password)
     return auth_service.login(db, credentials)
 
 

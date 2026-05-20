@@ -25,6 +25,7 @@ def create_staff(db: Session, data: staff_schema.StaffCreate) -> staff_schema.St
         name=data.name,
         email=data.email,
         phone_number=data.phone_number,
+        whatsapp_number=data.whatsapp_number,
         role=data.role,
         password_hash=_hash_password(data.password),
     )

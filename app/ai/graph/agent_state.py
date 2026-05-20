@@ -8,6 +8,11 @@ class AgentState(TypedDict):
     conversation_id: Optional[str]
     customer_id: Optional[str]
     customer_whatsapp_number: str
+    customer_name: Optional[str]
+    customer_display_name: Optional[str]
+    customer_email: Optional[str]
+    customer_extra_metadata: Optional[dict]
+    customer_wa_id: Optional[str]
     intent: Optional[str] #product_inquiry, order_status, return_request, etc.
     sentiment: Optional[str] #positive, negative, neutral
     cart_id: Optional[str]

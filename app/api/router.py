@@ -16,7 +16,7 @@ from .endpoints.handoff_endpoints import handoff_router
 from .endpoints.whatsapp_webhook_endpoints import whatsapp_webhook_router
 from .endpoints.bank_account_endpoints import bank_account_router
 
-api_router = APIRouter(prefix="/api/v1")
+api_router = APIRouter()
 
 api_router.include_router(auth_router)
 api_router.include_router(staff_router)

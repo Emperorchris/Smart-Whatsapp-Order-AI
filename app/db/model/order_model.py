@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy import UUID, Column, Integer, String, Text, DateTime, ForeignKey, Numeric
+from sqlalchemy import JSON, UUID, Column, Integer, String, Text, DateTime, ForeignKey, Numeric
 from sqlalchemy.orm import relationship
 from ..base import Base
 from ...core import utils
@@ -27,6 +27,8 @@ class Order(Base):
     payment_status = Column(String, default=utils.PaymentStatus.PENDING.value)
 
     delivery_address = Column(Text)
+    
+    extra_metadata = Column(JSON, nullable=True)  # For any additional order info
     
     order_items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
 

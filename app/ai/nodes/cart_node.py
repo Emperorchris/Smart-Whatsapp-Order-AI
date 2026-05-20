@@ -1,27 +1,29 @@
 from ..graph.agent_state import AgentState
-from sqlalchemy.orm import Session
+from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import AIMessage, HumanMessage
 from ...core.config import Config
 from langchain_openai import ChatOpenAI
 from ...services import cart_service, product_service, cart_item_service
 from ...db.schemas import cart_schema, cart_item_schema
 from ...core.utils import CartActionType
-from ...db.model import carts_model
 
 llm = ChatOpenAI(model=Config.OPENAI_LLM_MODEL, temperature=0)
 
 structure_llm = llm.with_structured_output(cart_schema.CartAction)
 
 
-def cart_node(state: AgentState, db: Session) -> AgentState:
+def cart_node(state: AgentState, config: RunnableConfig) -> AgentState:
+    db = config["configurable"]["db"]
     latest_message = state["messages"][-1].content if state["messages"] else ""
     customer_id = state["customer_id"]
 
     params: cart_schema.CartAction = structure_llm.invoke(
         [HumanMessage(content=latest_message)])
 
-    carts = cart_service.get_carts_by_customer_id(db, customer_id)
-    cart: carts_model.Cart | None = carts[0] if carts else None
+    try:
+        cart = cart_service.get_cart_by_customer_id(db, customer_id)
+    except Exception:
+        cart = None
 
     action = params.action
 

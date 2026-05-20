@@ -132,6 +132,8 @@ class GraphNodeName(enum.Enum):
     PRODUCT_LOOKUP_NODE = "product_lookup_node"
     ROUTER_NODE = "router_node"
     ROUTE_BY_INTENT = "route_by_intent_node"
+    ORDER_NODE = "order_node"
+    PAYMENT_NODE = "payment_node"
     
     
 class IntentName(enum.Enum):
@@ -140,3 +142,10 @@ class IntentName(enum.Enum):
     ORDER = "order"
     HANDOFF = "handoff"
     CHITCHAT = "chitchat"
+
+
+
+class OrderActionType(enum.Enum):
+    PLACE_ORDER = "place_order"
+    CHECK_STATUS = "check_status"
+    CANCEL_ORDER = "cancel_order"

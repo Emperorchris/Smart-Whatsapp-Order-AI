@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import uuid
 from sqlalchemy import UUID, Column, Integer, DateTime, ForeignKey, Numeric
+from sqlalchemy.orm import relationship
 from ..base import Base
 from ...core import utils
 
@@ -11,6 +12,8 @@ class CartItem(Base):
     id = Column(UUID, primary_key=True, default=uuid.uuid4, index=True, unique=True)
 
     cart_id = Column(ForeignKey("carts.id", ondelete="CASCADE"), nullable=False)
+    
+    cart = relationship("Cart", back_populates="cart_items")
 
     product_id = Column(ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     quantity = Column(Integer, nullable=False, default=1)

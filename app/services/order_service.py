@@ -2,6 +2,7 @@ from ..db.schemas import order_schema
 from ..core import exceptions
 from ..db.model import order_model
 from sqlalchemy.orm import Session
+from ..core import utils
 
 
 def create_order(db: Session, order_data: order_schema.OrderSchema) -> order_schema.OrderResponse:
@@ -19,7 +20,8 @@ def create_order(db: Session, order_data: order_schema.OrderSchema) -> order_sch
         status=order_data.status,
         total_amount=order_data.total_amount,
         payment_status=order_data.payment_status,
-        delivery_address=order_data.delivery_address
+        delivery_address=order_data.delivery_address,
+        extra_metadata=order_data.extra_metadata
     )
 
     db.add(new_order)
@@ -82,11 +84,30 @@ def update_order(db: Session, order_id: str, order_data: order_schema.OrderSchem
     order.total_amount = order_data.total_amount
     order.payment_status = order_data.payment_status
     order.delivery_address = order_data.delivery_address
+    order.extra_metadata = order_data.extra_metadata
 
     db.commit()
     db.refresh(order)
 
     return order_schema.OrderResponse.model_validate(order)
+
+
+def cancel_order(db: Session, order_id: str) -> order_schema.OrderResponse:
+    order = db.query(order_model.Order).filter(
+        order_model.Order.id == order_id).first()
+
+    if not order:
+        raise exceptions.NotFoundException("Order not found.")
+
+    if order.status in [utils.OrderStatus.CANCELLED.value, utils.OrderStatus.DELIVERED.value]:
+        raise exceptions.BadRequestException(f"Cannot cancel an order that is already {order.status}.")
+
+    order.status = utils.OrderStatus.CANCELLED.value
+    db.commit()
+    db.refresh(order)
+
+    return order_schema.OrderResponse.model_validate(order)
+
 
 
 def delete_order(db: Session, order_id: str):

@@ -1,8 +1,9 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from uuid import UUID
 from datetime import datetime
 from typing import Optional
 from ...core import utils
+from . import cart_item_schema
 
 
 class CartSchema(BaseModel):
@@ -12,6 +13,7 @@ class CartSchema(BaseModel):
 
 class CartResponse(CartSchema):
     id: UUID
+    cart_items: Optional[list[cart_item_schema.CartItemResponse]] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

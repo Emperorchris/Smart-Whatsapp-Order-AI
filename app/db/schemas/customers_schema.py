@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr
 from typing import Optional
 from uuid import UUID
@@ -18,7 +19,7 @@ class CustomerResponse(CustomerSchema):
     email: Optional[EmailStr] = None
     display_name: Optional[str] = None
     extra_metadata: Optional[dict] = None
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

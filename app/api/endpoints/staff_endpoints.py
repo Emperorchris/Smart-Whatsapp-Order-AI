@@ -7,8 +7,8 @@ from ...db.schemas import staff_schema
 staff_router = APIRouter(prefix="/staff", tags=["Staff"])
 
 
-@staff_router.post("/", response_model=staff_schema.StaffResponse, dependencies=[])
-def create_staff(data: staff_schema.StaffCreate, db: DBSession, _: AdminOnly):
+@staff_router.post("/", response_model=staff_schema.StaffResponse)
+def create_staff(data: staff_schema.StaffCreate, db: DBSession):
     return staff_service.create_staff(db, data)
 
 

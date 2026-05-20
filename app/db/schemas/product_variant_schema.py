@@ -9,7 +9,7 @@ class ProductVariantSchema(BaseModel):
     product_id: UUID
     # sku: str
     attributes: Dict[str, Any]  # e.g. {"size": "M", "color": "Red"}
-    price: Decimal
+    product_variant_price: Decimal
     inventory_quantity: int = 0
     low_stock_threshold: int = 5
     is_active: bool = True
@@ -21,5 +21,3 @@ class ProductVariantResponse(ProductVariantSchema):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-
-

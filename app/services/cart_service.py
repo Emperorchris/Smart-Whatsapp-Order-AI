@@ -32,11 +32,16 @@ def get_all_carts(db: Session) -> list[cart_schema.CartResponse]:
     return [cart_schema.CartResponse.model_validate(c) for c in carts]
 
 
-def get_carts_by_customer_id(db: Session, customer_id: str) -> list[cart_schema.CartResponse]:
-    carts = db.query(carts_model.Cart).filter(
-        carts_model.Cart.customer_id == customer_id).all()
-    return [cart_schema.CartResponse.model_validate(c) for c in carts]
+def get_cart_by_customer_id(db: Session, customer_id: str) -> cart_schema.CartResponse:
+    cart = db.query(carts_model.Cart).filter(
+        carts_model.Cart.customer_id == customer_id,
+        carts_model.Cart.status == "active"
+    ).first()
 
+    if not cart:
+        raise exceptions.NotFoundException("Active cart not found for this customer.")
+
+    return cart_schema.CartResponse.model_validate(cart)
 
 def update_cart(db: Session, cart_id: str, cart_data: cart_schema.CartSchema) -> cart_schema.CartResponse:
     cart = db.query(carts_model.Cart).filter(
@@ -63,3 +68,15 @@ def delete_cart(db: Session, cart_id: str):
 
     db.delete(cart)
     db.commit()
+
+
+
+# def clear_cart(db: Session, cart_id: str):
+#     cart = db.query(carts_model.Cart).filter(
+#         carts_model.Cart.id == cart_id).first()
+
+#     if not cart:
+#         raise exceptions.NotFoundException("Cart not found.")
+
+#     cart.cart_items.clear()
+#     db.commit()
