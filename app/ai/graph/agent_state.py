@@ -19,6 +19,7 @@ class AgentState(TypedDict):
     order_id: Optional[str]
     payment_status: Optional[str] #paid, pending, failed
     search_results: Optional[list] #for product inquiries, etc.
+    media_urls: Optional[list[str]] #media URLs to send to the customer
     handoff_active: bool = False
     handoff_reason: Optional[str] #if handoff is triggered, the reason for it
     response: Optional[str]

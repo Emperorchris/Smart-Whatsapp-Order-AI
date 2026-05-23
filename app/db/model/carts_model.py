@@ -12,10 +12,10 @@ class Cart(Base):
     id = Column(UUID, primary_key=True, default=uuid.uuid4, index=True, unique=True)
 
     customer_id = Column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
-    cart_items = relationship("CartItem", back_populates="cart", cascade="all, delete-orphan")
+    cart_items = relationship("CartItem", back_populates="cart", cascade="all, delete-orphan", lazy="selectin")
 
     status = Column(String, default=utils.CartStatus.ACTIVE.value)
     # active/checked_out/abandoned
 
-    created_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc), onupdate=datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))

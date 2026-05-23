@@ -9,28 +9,28 @@ webhook_router = APIRouter(prefix="/webhooks/processed", tags=["Processed Webhoo
 
 
 @webhook_router.post("/", response_model=processed_webhook_schema.ProcessedWebhookResponse)
-def create_processed_webhook(webhook_data: processed_webhook_schema.ProcessedWebhookSchema, db: DBSession):
-    return processed_webhook_service.create_processed_webhook(db, webhook_data)
+async def create_processed_webhook(webhook_data: processed_webhook_schema.ProcessedWebhookSchema, db: DBSession):
+    return await processed_webhook_service.create_processed_webhook(db, webhook_data)
 
 
 @webhook_router.get("/", response_model=list[processed_webhook_schema.ProcessedWebhookResponse])
-def get_all_processed_webhooks(db: DBSession):
-    return processed_webhook_service.get_all_processed_webhooks(db)
+async def get_all_processed_webhooks(db: DBSession):
+    return await processed_webhook_service.get_all_processed_webhooks(db)
 
 
 @webhook_router.get("/{webhook_id}", response_model=processed_webhook_schema.ProcessedWebhookResponse)
-def get_processed_webhook(webhook_id: str, db: DBSession):
-    return processed_webhook_service.get_processed_webhook_by_id(db, webhook_id)
+async def get_processed_webhook(webhook_id: str, db: DBSession):
+    return await processed_webhook_service.get_processed_webhook_by_id(db, webhook_id)
 
 
 @webhook_router.get("/event/{event_id}", response_model=processed_webhook_schema.ProcessedWebhookResponse)
-def get_processed_webhook_by_event(event_id: str, db: DBSession):
-    return processed_webhook_service.get_processed_webhook_by_event_id(db, event_id)
+async def get_processed_webhook_by_event(event_id: str, db: DBSession):
+    return await processed_webhook_service.get_processed_webhook_by_event_id(db, event_id)
 
 
 @webhook_router.delete("/{webhook_id}", status_code=204)
-def delete_processed_webhook(webhook_id: str, db: DBSession):
-    processed_webhook_service.delete_processed_webhook(db, webhook_id)
+async def delete_processed_webhook(webhook_id: str, db: DBSession):
+    await processed_webhook_service.delete_processed_webhook(db, webhook_id)
 
 
 @webhook_router.post("/twilio/status")
@@ -46,12 +46,12 @@ async def twilio_status_callback(db: DBSession, request: Request):
     # Prevent duplicate processing
     event_id = f"status_{message_sid}_{message_status}"
     try:
-        processed_webhook_service.get_processed_webhook_by_event_id(db, event_id)
+        await processed_webhook_service.get_processed_webhook_by_event_id(db, event_id)
         return Response(content="", media_type="text/xml")
     except exceptions.NotFoundException:
         pass
 
-    processed_webhook_service.create_processed_webhook(
+    await processed_webhook_service.create_processed_webhook(
         db, ProcessedWebhookSchema(source="twilio", event_id=event_id)
     )
 
@@ -69,8 +69,8 @@ async def twilio_status_callback(db: DBSession, request: Request):
 
     # Find and update the message
     try:
-        message = message_service.get_message_by_whatsapp_message_id(db, message_sid)
-        message_service.update_message_status(db, str(message.id), mapped_status)
+        message = await message_service.get_message_by_whatsapp_message_id(db, message_sid)
+        await message_service.update_message_status(db, str(message.id), mapped_status)
     except exceptions.NotFoundException:
         pass
 

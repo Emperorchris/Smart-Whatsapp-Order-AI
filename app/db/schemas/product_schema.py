@@ -1,8 +1,13 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional, List
+from typing import Optional
 from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
+
+
+class MediaItem(BaseModel):
+    url: str
+    type: str  # "image", "video", "live_image", "live_video"
 
 
 class ProductSchema(BaseModel):
@@ -11,10 +16,10 @@ class ProductSchema(BaseModel):
     price: Decimal
     sku: Optional[str] = None
     category_id: Optional[UUID] = None
-    image_urls: Optional[List[str]] = None
-    live_image_urls: Optional[List[str]] = None
-    video_urls: Optional[List[str]] = None
-    live_video_urls: Optional[List[str]] = None
+    # image_urls: Optional[List[str]] = None
+    # live_image_urls: Optional[List[str]] = None
+    # video_urls: Optional[List[str]] = None
+    # live_video_urls: Optional[List[str]] = None
     is_active: bool = True
     
     
@@ -31,6 +36,8 @@ class ProductSearchParams(BaseModel):
 
 class ProductResponse(ProductSchema):
     id: UUID
+    tracking_id: str
+    media: Optional[list[MediaItem]] = None
     created_at: datetime
     updated_at: datetime
 

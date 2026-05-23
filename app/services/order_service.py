@@ -1,15 +1,16 @@
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..db.schemas import order_schema
-from ..core import exceptions
+from ..core import exceptions, utils
 from ..db.model import order_model
-from sqlalchemy.orm import Session
-from ..core import utils
 
 
-def create_order(db: Session, order_data: order_schema.OrderSchema) -> order_schema.OrderResponse:
-    existing = db.query(order_model.Order).filter(
-        order_model.Order.order_number == order_data.order_number
-    ).first()
-    if existing:
+async def create_order(db: AsyncSession, order_data: order_schema.OrderSchema) -> order_schema.OrderResponse:
+    result = await db.execute(
+        select(order_model.Order).filter(order_model.Order.order_number == order_data.order_number)
+    )
+    if result.scalars().first():
         raise exceptions.ConflictException("An order with this order number already exists.")
 
     new_order = order_model.Order(
@@ -25,15 +26,17 @@ def create_order(db: Session, order_data: order_schema.OrderSchema) -> order_sch
     )
 
     db.add(new_order)
-    db.commit()
-    db.refresh(new_order)
+    await db.commit()
+    await db.refresh(new_order)
 
     return order_schema.OrderResponse.model_validate(new_order)
 
 
-def get_order_by_id(db: Session, order_id: str) -> order_schema.OrderResponse:
-    order = db.query(order_model.Order).filter(
-        order_model.Order.id == order_id).first()
+async def get_order_by_id(db: AsyncSession, order_id: str) -> order_schema.OrderResponse:
+    result = await db.execute(
+        select(order_model.Order).filter(order_model.Order.id == order_id)
+    )
+    order = result.scalars().first()
 
     if not order:
         raise exceptions.NotFoundException("Order not found.")
@@ -41,14 +44,17 @@ def get_order_by_id(db: Session, order_id: str) -> order_schema.OrderResponse:
     return order_schema.OrderResponse.model_validate(order)
 
 
-def get_all_orders(db: Session) -> list[order_schema.OrderResponse]:
-    orders = db.query(order_model.Order).all()
+async def get_all_orders(db: AsyncSession) -> list[order_schema.OrderResponse]:
+    result = await db.execute(select(order_model.Order))
+    orders = result.scalars().all()
     return [order_schema.OrderResponse.model_validate(o) for o in orders]
 
 
-def get_order_by_order_number(db: Session, order_number: str) -> order_schema.OrderResponse:
-    order = db.query(order_model.Order).filter(
-        order_model.Order.order_number == order_number).first()
+async def get_order_by_order_number(db: AsyncSession, order_number: str) -> order_schema.OrderResponse:
+    result = await db.execute(
+        select(order_model.Order).filter(order_model.Order.order_number == order_number)
+    )
+    order = result.scalars().first()
 
     if not order:
         raise exceptions.NotFoundException("Order not found.")
@@ -56,24 +62,30 @@ def get_order_by_order_number(db: Session, order_number: str) -> order_schema.Or
     return order_schema.OrderResponse.model_validate(order)
 
 
-def get_orders_by_customer_id(db: Session, customer_id: str) -> list[order_schema.OrderResponse]:
-    orders = db.query(order_model.Order).filter(
-        order_model.Order.customer_id == customer_id).all()
+async def get_orders_by_customer_id(db: AsyncSession, customer_id: str) -> list[order_schema.OrderResponse]:
+    result = await db.execute(
+        select(order_model.Order).filter(order_model.Order.customer_id == customer_id)
+    )
+    orders = result.scalars().all()
     return [order_schema.OrderResponse.model_validate(o) for o in orders]
 
 
-def update_order(db: Session, order_id: str, order_data: order_schema.OrderSchema) -> order_schema.OrderResponse:
-    order = db.query(order_model.Order).filter(
-        order_model.Order.id == order_id).first()
+async def update_order(db: AsyncSession, order_id: str, order_data: order_schema.OrderSchema) -> order_schema.OrderResponse:
+    result = await db.execute(
+        select(order_model.Order).filter(order_model.Order.id == order_id)
+    )
+    order = result.scalars().first()
 
     if not order:
         raise exceptions.NotFoundException("Order not found.")
 
-    is_number_taken = db.query(order_model.Order).filter(
-        order_model.Order.order_number == order_data.order_number,
-        order_model.Order.id != order_id
-    ).first()
-    if is_number_taken:
+    dup_result = await db.execute(
+        select(order_model.Order).filter(
+            order_model.Order.order_number == order_data.order_number,
+            order_model.Order.id != order_id
+        )
+    )
+    if dup_result.scalars().first():
         raise exceptions.ConflictException("Order number is already taken by another order.")
 
     order.customer_id = order_data.customer_id
@@ -86,15 +98,17 @@ def update_order(db: Session, order_id: str, order_data: order_schema.OrderSchem
     order.delivery_address = order_data.delivery_address
     order.extra_metadata = order_data.extra_metadata
 
-    db.commit()
-    db.refresh(order)
+    await db.commit()
+    await db.refresh(order)
 
     return order_schema.OrderResponse.model_validate(order)
 
 
-def cancel_order(db: Session, order_id: str) -> order_schema.OrderResponse:
-    order = db.query(order_model.Order).filter(
-        order_model.Order.id == order_id).first()
+async def cancel_order(db: AsyncSession, order_id: str) -> order_schema.OrderResponse:
+    result = await db.execute(
+        select(order_model.Order).filter(order_model.Order.id == order_id)
+    )
+    order = result.scalars().first()
 
     if not order:
         raise exceptions.NotFoundException("Order not found.")
@@ -103,19 +117,20 @@ def cancel_order(db: Session, order_id: str) -> order_schema.OrderResponse:
         raise exceptions.BadRequestException(f"Cannot cancel an order that is already {order.status}.")
 
     order.status = utils.OrderStatus.CANCELLED.value
-    db.commit()
-    db.refresh(order)
+    await db.commit()
+    await db.refresh(order)
 
     return order_schema.OrderResponse.model_validate(order)
 
 
-
-def delete_order(db: Session, order_id: str):
-    order = db.query(order_model.Order).filter(
-        order_model.Order.id == order_id).first()
+async def delete_order(db: AsyncSession, order_id: str):
+    result = await db.execute(
+        select(order_model.Order).filter(order_model.Order.id == order_id)
+    )
+    order = result.scalars().first()
 
     if not order:
         raise exceptions.NotFoundException("Order not found.")
 
-    db.delete(order)
-    db.commit()
+    await db.delete(order)
+    await db.commit()

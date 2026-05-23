@@ -12,5 +12,5 @@ class BankAccount(Base):
     account_number = Column(String, nullable=False)
     account_name = Column(String, nullable=False)
     is_default = Column(Boolean, default=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc), onupdate=datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))

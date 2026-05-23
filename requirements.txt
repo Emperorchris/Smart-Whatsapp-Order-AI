@@ -5,7 +5,8 @@ python-multipart
 sqlalchemy
 alembic
 supabase
-asyncpg 
+asyncpg
+greenlet
 psycopg2-binary
  
 # AI/LLM
@@ -14,6 +15,7 @@ langchain-openai
 langgraph
 openai
 tiktoken
+langchain_anthropic
 
  
 

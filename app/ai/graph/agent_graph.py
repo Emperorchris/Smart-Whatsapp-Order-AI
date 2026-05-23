@@ -1,65 +1,72 @@
 from langgraph.graph import StateGraph, START, END
-from sqlalchemy.orm import Session
+from langgraph.prebuilt import ToolNode
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .agent_state import AgentState
-from ..nodes import (
-    product_lookup_node,
-    handoff_node,
-    customer_node,
-    cart_node,
-    router_node,
-    order_node,
-)
-
-from ...core.utils import GraphNodeName
+from ..tools.product_tools import product_tools
+from ..tools.cart_tools import cart_tools
+from ..tools.order_tools import order_tools
+from ..tools.handoff_tools import handoff_tools
+from ..prompts.system_prompt import SYSTEM_PROMPT
+from ...core.config import Config
 
 
-def route_by_intent(state: AgentState) -> str:
-    return state["intent"]  # router node writes this, function just reads it
+# from ..nodes import (
+#     product_lookup_node,
+#     handoff_node,
+#     customer_node,
+#     cart_node,
+#     router_node,
+#     order_node,
+# )
+# from ...core.utils import GraphNodeName
+
+all_tools = product_tools + cart_tools + order_tools + handoff_tools
+
+llm = ChatOpenAI(model=Config.OPENAI_LLM_MODEL, temperature=0)
+llm_with_tools = llm.bind_tools(all_tools)
+
+
+async def agent_node(state: AgentState):
+    messages = state["messages"]
+
+    # Prepend system prompt if not already there
+    if not messages or not isinstance(messages[0], SystemMessage):
+        messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+
+    response = await llm_with_tools.ainvoke(messages)
+    return {"messages": [response]}
+
+
+def should_continue(state: AgentState) -> str:
+    last_message = state["messages"][-1]
+    if last_message.tool_calls:
+        return "tools"
+    return END
+
 
 
 graph_builder = StateGraph(AgentState)
 
-graph_builder.add_node(
-    GraphNodeName.CUSTOMER_NODE.value, customer_node.customer_identifier_node
-)
-graph_builder.add_node(GraphNodeName.CART_NODE.value, cart_node.cart_node)
-graph_builder.add_node(
-    GraphNodeName.PRODUCT_LOOKUP_NODE.value, product_lookup_node.product_lookup_node
-)
-graph_builder.add_node(GraphNodeName.HANDOFF_NODE.value, handoff_node.handoff_node)
-graph_builder.add_node(GraphNodeName.ROUTER_NODE.value, router_node.router_node)
-graph_builder.add_node(GraphNodeName.ORDER_NODE.value, order_node.order_node)
+graph_builder.add_node("agent", agent_node)
+graph_builder.add_node("tools", ToolNode(all_tools))
 
-
-graph_builder.add_edge(START, GraphNodeName.CUSTOMER_NODE.value)
-graph_builder.add_edge(
-    GraphNodeName.CUSTOMER_NODE.value, GraphNodeName.ROUTER_NODE.value
-)
-
-
-graph_builder.add_conditional_edges(
-    GraphNodeName.ROUTER_NODE.value,
-    route_by_intent,
-    {
-        "product_inquiry": GraphNodeName.PRODUCT_LOOKUP_NODE.value,
-        "handoff": GraphNodeName.HANDOFF_NODE.value,
-        "cart": GraphNodeName.CART_NODE.value,
-        "order": GraphNodeName.ORDER_NODE.value,
-        
-    },
-)
-
-
-graph_builder.add_edge(GraphNodeName.PRODUCT_LOOKUP_NODE.value, END)
-graph_builder.add_edge(GraphNodeName.CART_NODE.value, END)
-graph_builder.add_edge(GraphNodeName.HANDOFF_NODE.value, END)
-graph_builder.add_edge(GraphNodeName.ORDER_NODE.value, END)
+graph_builder.add_edge(START, "agent")
+graph_builder.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
+graph_builder.add_edge("tools", "agent")  # after tool execution, go back to agent
 
 graph = graph_builder.compile()
 
 
-def run_agent(state: AgentState, db: Session) -> dict:
-    """Invoke the agent graph with a database session."""
-    config = {"configurable": {"db": db}}
-    return graph.invoke(state, config=config)
+async def run_agent(state: AgentState, db: AsyncSession, customer_id: str = None, conversation_id: str = None) -> dict:
+    """Invoke the agent graph with a database session and customer context."""
+    config = {
+        "configurable": {
+            "db": db,
+            "customer_id": customer_id or state.get("customer_id"),
+            "conversation_id": conversation_id or state.get("conversation_id"),
+        }
+    }
+    return await graph.ainvoke(state, config=config)

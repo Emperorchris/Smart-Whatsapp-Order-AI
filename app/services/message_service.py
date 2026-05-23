@@ -1,15 +1,19 @@
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..db.schemas import message_schema
 from ..core import exceptions
 from ..db.model import message_model
-from sqlalchemy.orm import Session
 
 
-def create_message(db: Session, message_data: message_schema.MessageSchema) -> message_schema.MessageResponse:
+async def create_message(db: AsyncSession, message_data: message_schema.MessageSchema) -> message_schema.MessageResponse:
     if message_data.whatsapp_message_id:
-        existing = db.query(message_model.Message).filter(
-            message_model.Message.whatsapp_message_id == message_data.whatsapp_message_id
-        ).first()
-        if existing:
+        result = await db.execute(
+            select(message_model.Message).filter(
+                message_model.Message.whatsapp_message_id == message_data.whatsapp_message_id
+            )
+        )
+        if result.scalars().first():
             raise exceptions.ConflictException("A message with this WhatsApp message ID already exists.")
 
     new_message = message_model.Message(
@@ -25,15 +29,17 @@ def create_message(db: Session, message_data: message_schema.MessageSchema) -> m
     )
 
     db.add(new_message)
-    db.commit()
-    db.refresh(new_message)
+    await db.commit()
+    await db.refresh(new_message)
 
     return message_schema.MessageResponse.model_validate(new_message)
 
 
-def get_message_by_id(db: Session, message_id: str) -> message_schema.MessageResponse:
-    message = db.query(message_model.Message).filter(
-        message_model.Message.id == message_id).first()
+async def get_message_by_id(db: AsyncSession, message_id: str) -> message_schema.MessageResponse:
+    result = await db.execute(
+        select(message_model.Message).filter(message_model.Message.id == message_id)
+    )
+    message = result.scalars().first()
 
     if not message:
         raise exceptions.NotFoundException("Message not found.")
@@ -41,20 +47,29 @@ def get_message_by_id(db: Session, message_id: str) -> message_schema.MessageRes
     return message_schema.MessageResponse.model_validate(message)
 
 
-def get_all_messages(db: Session) -> list[message_schema.MessageResponse]:
-    messages = db.query(message_model.Message).all()
+async def get_all_messages(db: AsyncSession) -> list[message_schema.MessageResponse]:
+    result = await db.execute(select(message_model.Message))
+    messages = result.scalars().all()
     return [message_schema.MessageResponse.model_validate(m) for m in messages]
 
 
-def get_messages_by_conversation_id(db: Session, conversation_id: str) -> list[message_schema.MessageResponse]:
-    messages = db.query(message_model.Message).filter(
-        message_model.Message.conversation_id == conversation_id).all()
+async def get_messages_by_conversation_id(db: AsyncSession, conversation_id: str) -> list[message_schema.MessageResponse]:
+    result = await db.execute(
+        select(message_model.Message).filter(
+            message_model.Message.conversation_id == conversation_id
+        )
+    )
+    messages = result.scalars().all()
     return [message_schema.MessageResponse.model_validate(m) for m in messages]
 
 
-def get_message_by_whatsapp_message_id(db: Session, whatsapp_message_id: str) -> message_schema.MessageResponse:
-    message = db.query(message_model.Message).filter(
-        message_model.Message.whatsapp_message_id == whatsapp_message_id).first()
+async def get_message_by_whatsapp_message_id(db: AsyncSession, whatsapp_message_id: str) -> message_schema.MessageResponse:
+    result = await db.execute(
+        select(message_model.Message).filter(
+            message_model.Message.whatsapp_message_id == whatsapp_message_id
+        )
+    )
+    message = result.scalars().first()
 
     if not message:
         raise exceptions.NotFoundException("Message not found.")
@@ -62,19 +77,23 @@ def get_message_by_whatsapp_message_id(db: Session, whatsapp_message_id: str) ->
     return message_schema.MessageResponse.model_validate(message)
 
 
-def update_message(db: Session, message_id: str, message_data: message_schema.MessageSchema) -> message_schema.MessageResponse:
-    message = db.query(message_model.Message).filter(
-        message_model.Message.id == message_id).first()
+async def update_message(db: AsyncSession, message_id: str, message_data: message_schema.MessageSchema) -> message_schema.MessageResponse:
+    result = await db.execute(
+        select(message_model.Message).filter(message_model.Message.id == message_id)
+    )
+    message = result.scalars().first()
 
     if not message:
         raise exceptions.NotFoundException("Message not found.")
 
     if message_data.whatsapp_message_id:
-        is_taken = db.query(message_model.Message).filter(
-            message_model.Message.whatsapp_message_id == message_data.whatsapp_message_id,
-            message_model.Message.id != message_id
-        ).first()
-        if is_taken:
+        dup_result = await db.execute(
+            select(message_model.Message).filter(
+                message_model.Message.whatsapp_message_id == message_data.whatsapp_message_id,
+                message_model.Message.id != message_id
+            )
+        )
+        if dup_result.scalars().first():
             raise exceptions.ConflictException("WhatsApp message ID is already taken by another message.")
 
     message.conversation_id = message_data.conversation_id
@@ -87,32 +106,36 @@ def update_message(db: Session, message_id: str, message_data: message_schema.Me
     message.status = message_data.status
     message.whatsapp_message_id = message_data.whatsapp_message_id
 
-    db.commit()
-    db.refresh(message)
+    await db.commit()
+    await db.refresh(message)
 
     return message_schema.MessageResponse.model_validate(message)
 
 
-def update_message_status(db: Session, message_id: str, status: str) -> message_schema.MessageResponse:
-    message = db.query(message_model.Message).filter(
-        message_model.Message.id == message_id).first()
+async def update_message_status(db: AsyncSession, message_id: str, status: str) -> message_schema.MessageResponse:
+    result = await db.execute(
+        select(message_model.Message).filter(message_model.Message.id == message_id)
+    )
+    message = result.scalars().first()
 
     if not message:
         raise exceptions.NotFoundException("Message not found.")
 
     message.status = status
-    db.commit()
-    db.refresh(message)
+    await db.commit()
+    await db.refresh(message)
 
     return message_schema.MessageResponse.model_validate(message)
 
 
-def delete_message(db: Session, message_id: str):
-    message = db.query(message_model.Message).filter(
-        message_model.Message.id == message_id).first()
+async def delete_message(db: AsyncSession, message_id: str):
+    result = await db.execute(
+        select(message_model.Message).filter(message_model.Message.id == message_id)
+    )
+    message = result.scalars().first()
 
     if not message:
         raise exceptions.NotFoundException("Message not found.")
 
-    db.delete(message)
-    db.commit()
+    await db.delete(message)
+    await db.commit()

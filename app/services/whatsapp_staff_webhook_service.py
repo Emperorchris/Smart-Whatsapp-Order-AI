@@ -1,4 +1,5 @@
-from sqlalchemy.orm import Session
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core import utils
 from ..db.model import human_hand_off_model, staff_model
@@ -12,46 +13,49 @@ from . import (
 )
 
 
-def handle_staff_incoming_message(db: Session, staff_number: str, body: str, message_sid: str) -> None:
+async def handle_staff_incoming_message(db: AsyncSession, staff_number: str, body: str, message_sid: str) -> None:
     clean_body = body.strip()
     if clean_body.startswith("#"):
-        _handle_staff_command(db, staff_number, clean_body)
+        await _handle_staff_command(db, staff_number, clean_body)
         return
 
-    _handle_staff_reply(db, staff_number, clean_body, message_sid)
+    await _handle_staff_reply(db, staff_number, clean_body, message_sid)
 
 
-def _handle_staff_reply(db: Session, staff_number: str, body: str, message_sid: str) -> None:
-    """Forward a staff message to their assigned customer."""
-    staff = db.query(staff_model.Staff).filter(
-        staff_model.Staff.whatsapp_number == staff_number
-    ).first()
+async def _handle_staff_reply(db: AsyncSession, staff_number: str, body: str, message_sid: str) -> None:
+    result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.whatsapp_number == staff_number)
+    )
+    staff = result.scalars().first()
 
     if not staff:
         return
 
-    active_handoff = db.query(human_hand_off_model.HumanHandOff).filter(
-        human_hand_off_model.HumanHandOff.assigned_staff_id == staff.id,
-        human_hand_off_model.HumanHandOff.status == utils.HandOffStatus.ACTIVE.value,
-    ).first()
+    handoff_result = await db.execute(
+        select(human_hand_off_model.HumanHandOff).filter(
+            human_hand_off_model.HumanHandOff.assigned_staff_id == staff.id,
+            human_hand_off_model.HumanHandOff.status == utils.HandOffStatus.ACTIVE.value,
+        )
+    )
+    active_handoff = handoff_result.scalars().first()
 
     if not active_handoff:
-        whatsapp_service.send_message(
+        await whatsapp_service.send_message(
             to=staff_number,
             body="You have no active handoff. Your message was not delivered.",
         )
         return
 
-    conversation = conversation_service.get_conversation_by_id(
+    conversation = await conversation_service.get_conversation_by_id(
         db, str(active_handoff.conversation_id)
     )
-    customer = customer_service.get_customer_by_id(
+    customer = await customer_service.get_customer_by_id(
         db, str(conversation.customer_id))
 
-    sent = whatsapp_service.send_message(
+    sent = await whatsapp_service.send_message(
         to=customer.whatsapp_number, body=body)
 
-    message_service.create_message(
+    await message_service.create_message(
         db,
         MessageSchema(
             conversation_id=active_handoff.conversation_id,
@@ -61,11 +65,11 @@ def _handle_staff_reply(db: Session, staff_number: str, body: str, message_sid: 
             message_type=utils.MessageType.TEXT.value,
             content=body,
             status=utils.MessageStatus.SENT.value,
-            whatsapp_message_id=sent["sid"],
+            whatsapp_message_id=sent.get("message_id") or sent.get("sid"),
         ),
     )
 
-    message_service.create_message(
+    await message_service.create_message(
         db,
         MessageSchema(
             conversation_id=active_handoff.conversation_id,
@@ -80,42 +84,45 @@ def _handle_staff_reply(db: Session, staff_number: str, body: str, message_sid: 
     )
 
 
-def _handle_staff_command(db: Session, staff_number: str, command: str) -> None:
-    """Handle commands sent by staff via WhatsApp."""
-    staff = db.query(staff_model.Staff).filter(
-        staff_model.Staff.whatsapp_number == staff_number
-    ).first()
+async def _handle_staff_command(db: AsyncSession, staff_number: str, command: str) -> None:
+    result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.whatsapp_number == staff_number)
+    )
+    staff = result.scalars().first()
 
     if not staff:
         return
 
     if command == utils.StaffConversationCommand.DONE.value:
-        active_handoff = db.query(human_hand_off_model.HumanHandOff).filter(
-            human_hand_off_model.HumanHandOff.assigned_staff_id == staff.id,
-            human_hand_off_model.HumanHandOff.status == utils.HandOffStatus.ACTIVE.value,
-        ).first()
+        handoff_result = await db.execute(
+            select(human_hand_off_model.HumanHandOff).filter(
+                human_hand_off_model.HumanHandOff.assigned_staff_id == staff.id,
+                human_hand_off_model.HumanHandOff.status == utils.HandOffStatus.ACTIVE.value,
+            )
+        )
+        active_handoff = handoff_result.scalars().first()
 
         if active_handoff:
-            conversation_service.resume_ai(
+            await conversation_service.resume_ai(
                 db, str(active_handoff.conversation_id))
-            whatsapp_service.send_message(
+            await whatsapp_service.send_message(
                 to=staff_number,
                 body="✅ Handoff resolved. AI has resumed for this conversation.",
             )
         else:
-            whatsapp_service.send_message(
+            await whatsapp_service.send_message(
                 to=staff_number,
                 body="You have no active handoff to resolve.",
             )
 
     elif command == utils.StaffConversationCommand.NEXT.value:
         try:
-            handoff = human_handoff_service.claim_next_pending_handoff(
+            handoff = await human_handoff_service.claim_next_pending_handoff(
                 db, str(staff.id))
-            conversation_service.activate_handoff_for_staff(
+            await conversation_service.activate_handoff_for_staff(
                 db, str(handoff.conversation_id), str(staff.id)
             )
-            whatsapp_service.send_message(
+            await whatsapp_service.send_message(
                 to=staff_number,
                 body=(
                     f"📩 You've been assigned a new customer.\n"
@@ -124,52 +131,61 @@ def _handle_staff_command(db: Session, staff_number: str, command: str) -> None:
                 ),
             )
         except Exception as exc:
-            whatsapp_service.send_message(
+            await whatsapp_service.send_message(
                 to=staff_number,
                 body=f"Could not claim next handoff: {str(exc)}",
             )
 
     elif command == utils.StaffConversationCommand.QUEUE.value:
-        pending = db.query(human_hand_off_model.HumanHandOff).filter(
-            human_hand_off_model.HumanHandOff.status.in_(
-                [utils.HandOffStatus.REQUESTED.value,
-                    utils.HandOffStatus.PENDING.value]
+        count_result = await db.execute(
+            select(func.count()).select_from(human_hand_off_model.HumanHandOff).filter(
+                human_hand_off_model.HumanHandOff.status.in_(
+                    [utils.HandOffStatus.REQUESTED.value,
+                        utils.HandOffStatus.PENDING.value]
+                )
             )
-        ).count()
-        whatsapp_service.send_message(
+        )
+        pending = count_result.scalar()
+        await whatsapp_service.send_message(
             to=staff_number,
             body=f"📋 There are *{pending}* customer(s) waiting in the queue.",
         )
 
     elif command == utils.StaffConversationCommand.SKIP.value:
-        active_handoff = db.query(human_hand_off_model.HumanHandOff).filter(
-            human_hand_off_model.HumanHandOff.assigned_staff_id == staff.id,
-            human_hand_off_model.HumanHandOff.status == utils.HandOffStatus.ACTIVE.value,
-        ).first()
+        handoff_result = await db.execute(
+            select(human_hand_off_model.HumanHandOff).filter(
+                human_hand_off_model.HumanHandOff.assigned_staff_id == staff.id,
+                human_hand_off_model.HumanHandOff.status == utils.HandOffStatus.ACTIVE.value,
+            )
+        )
+        active_handoff = handoff_result.scalars().first()
 
         if active_handoff:
             active_handoff.assigned_staff_id = None
             active_handoff.status = utils.HandOffStatus.PENDING.value
             active_handoff.claimed_at = None
-            db.commit()
-            whatsapp_service.send_message(
+            await db.commit()
+            await whatsapp_service.send_message(
                 to=staff_number,
                 body="↩️ Handoff returned to the queue. Another agent can pick it up.",
             )
         else:
-            whatsapp_service.send_message(
+            await whatsapp_service.send_message(
                 to=staff_number,
                 body="You have no active handoff to skip.",
             )
 
     elif command == utils.StaffConversationCommand.INFO.value:
-        active_handoff = db.query(human_hand_off_model.HumanHandOff).filter(
-            human_hand_off_model.HumanHandOff.assigned_staff_id == staff.id,
-            human_hand_off_model.HumanHandOff.status == utils.HandOffStatus.ACTIVE.value,
-        ).first()
+        handoff_result = await db.execute(
+            select(human_hand_off_model.HumanHandOff).filter(
+                human_hand_off_model.HumanHandOff.assigned_staff_id == staff.id,
+                human_hand_off_model.HumanHandOff.status == utils.HandOffStatus.ACTIVE.value,
+            )
+        )
+        active_handoff = handoff_result.scalars().first()
 
         if active_handoff:
-            whatsapp_service.send_message(
+            await whatsapp_service.send_message(
                 to=staff_number,
                 body=(
                     "ℹ️ *Active Handoff Info*\n"
@@ -181,13 +197,13 @@ def _handle_staff_command(db: Session, staff_number: str, command: str) -> None:
                 ),
             )
         else:
-            whatsapp_service.send_message(
+            await whatsapp_service.send_message(
                 to=staff_number,
                 body="You have no active handoff at the moment.",
             )
 
     else:
-        whatsapp_service.send_message(
+        await whatsapp_service.send_message(
             to=staff_number,
             body=(
                 "Available commands:\n"

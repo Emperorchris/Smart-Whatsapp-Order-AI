@@ -14,4 +14,4 @@ class ProcessedWebhook(Base):
 
     event_id = Column(String, unique=True)
 
-    processed_at = Column(DateTime, default=datetime.now(tz=timezone.utc))
+    processed_at = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))

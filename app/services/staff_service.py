@@ -1,6 +1,8 @@
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
+
 from ..db.schemas import staff_schema
 from ..db.model import staff_model
 from ..core import exceptions
@@ -16,9 +18,11 @@ def _verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def create_staff(db: Session, data: staff_schema.StaffCreate) -> staff_schema.StaffResponse:
-    existing = db.query(staff_model.Staff).filter(staff_model.Staff.email == data.email).first()
-    if existing:
+async def create_staff(db: AsyncSession, data: staff_schema.StaffCreate) -> staff_schema.StaffResponse:
+    result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.email == data.email)
+    )
+    if result.scalars().first():
         raise exceptions.ConflictException("A staff member with this email already exists.")
 
     new_staff = staff_model.Staff(
@@ -31,51 +35,65 @@ def create_staff(db: Session, data: staff_schema.StaffCreate) -> staff_schema.St
     )
 
     db.add(new_staff)
-    db.commit()
-    db.refresh(new_staff)
+    await db.commit()
+    await db.refresh(new_staff)
 
     return staff_schema.StaffResponse.model_validate(new_staff)
 
 
-def get_staff_by_id(db: Session, staff_id: str) -> staff_schema.StaffResponse:
-    staff = db.query(staff_model.Staff).filter(
-        staff_model.Staff.id == staff_id,
-        staff_model.Staff.is_active.is_(True)).first()
+async def get_staff_by_id(db: AsyncSession, staff_id: str) -> staff_schema.StaffResponse:
+    result = await db.execute(
+        select(staff_model.Staff).filter(
+            staff_model.Staff.id == staff_id,
+            staff_model.Staff.is_active.is_(True)
+        )
+    )
+    staff = result.scalars().first()
     if not staff:
         raise exceptions.NotFoundException("Staff member not found.")
     return staff_schema.StaffResponse.model_validate(staff)
 
 
-def get_all_staff(db: Session) -> list[staff_schema.StaffResponse]:
-    staff_list = db.query(staff_model.Staff).filter(
-        staff_model.Staff.is_active.is_(True)).all()
+async def get_all_staff(db: AsyncSession) -> list[staff_schema.StaffResponse]:
+    result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.is_active.is_(True))
+    )
+    staff_list = result.scalars().all()
     return [staff_schema.StaffResponse.model_validate(s) for s in staff_list]
 
 
-def update_staff(db: Session, staff_id: str, data: staff_schema.StaffUpdate) -> staff_schema.StaffResponse:
-    staff = db.query(staff_model.Staff).filter(staff_model.Staff.id == staff_id).first()
+async def update_staff(db: AsyncSession, staff_id: str, data: staff_schema.StaffUpdate) -> staff_schema.StaffResponse:
+    result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.id == staff_id)
+    )
+    staff = result.scalars().first()
     if not staff:
         raise exceptions.NotFoundException("Staff member not found.")
 
     if data.email and data.email != staff.email:
-        email_taken = db.query(staff_model.Staff).filter(
-            staff_model.Staff.email == data.email,
-            staff_model.Staff.id != staff_id
-        ).first()
-        if email_taken:
+        dup_result = await db.execute(
+            select(staff_model.Staff).filter(
+                staff_model.Staff.email == data.email,
+                staff_model.Staff.id != staff_id
+            )
+        )
+        if dup_result.scalars().first():
             raise exceptions.ConflictException("Email is already in use by another staff member.")
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(staff, field, value)
 
-    db.commit()
-    db.refresh(staff)
+    await db.commit()
+    await db.refresh(staff)
 
     return staff_schema.StaffResponse.model_validate(staff)
 
 
-def change_password(db: Session, staff_id: str, data: staff_schema.StaffChangePassword):
-    staff = db.query(staff_model.Staff).filter(staff_model.Staff.id == staff_id).first()
+async def change_password(db: AsyncSession, staff_id: str, data: staff_schema.StaffChangePassword):
+    result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.id == staff_id)
+    )
+    staff = result.scalars().first()
     if not staff:
         raise exceptions.NotFoundException("Staff member not found.")
 
@@ -83,20 +101,25 @@ def change_password(db: Session, staff_id: str, data: staff_schema.StaffChangePa
         raise exceptions.UnauthorizedException("Current password is incorrect.")
 
     staff.password_hash = _hash_password(data.new_password)
-    db.commit()
+    await db.commit()
 
 
-def delete_staff(db: Session, staff_id: str):
-    staff = db.query(staff_model.Staff).filter(staff_model.Staff.id == staff_id).first()
+async def delete_staff(db: AsyncSession, staff_id: str):
+    result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.id == staff_id)
+    )
+    staff = result.scalars().first()
     if not staff:
         raise exceptions.NotFoundException("Staff member not found.")
-    db.delete(staff)
-    db.commit()
+    await db.delete(staff)
+    await db.commit()
 
 
-def authenticate_staff(db: Session, email: str, password: str) -> staff_model.Staff:
-    """Returns the raw ORM object — used internally by auth_service."""
-    staff = db.query(staff_model.Staff).filter(staff_model.Staff.email == email).first()
+async def authenticate_staff(db: AsyncSession, email: str, password: str) -> staff_model.Staff:
+    result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.email == email)
+    )
+    staff = result.scalars().first()
     if not staff or not _verify_password(password, staff.password_hash):
         raise exceptions.UnauthorizedException("Invalid email or password.")
     if not staff.is_active:

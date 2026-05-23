@@ -67,10 +67,10 @@ def product_lookup_node(state: AgentState, config: RunnableConfig) -> AgentState
         reply = "Here are the products I found:\n\n" + "\n\n".join(lines)
 
     # Collect all images from found products
-    # media_urls = []
-    # if products:
-    #     for p in products[:5]:
-    #         if p.image_urls:
-    #             media_urls.extend(p.image_urls)
-
-    return {"messages": [AIMessage(content=reply)], "search_results": products}
+    media_urls = []
+    if products:
+        for p in products[:10]:
+            if p.media:
+                media_urls.extend([item.url for item in p.media])
+                
+    return {"messages": [AIMessage(content=reply)], "search_results": products, "media_urls": media_urls}

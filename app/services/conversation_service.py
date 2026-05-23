@@ -1,11 +1,13 @@
-from ..db.schemas import conversation_schema
-from ..core import exceptions
-from ..db.model import conversation_model, staff_model, human_hand_off_model
-from sqlalchemy.orm import Session
-from ..core import utils
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 
-def create_conversation(db: Session, conversation_data: conversation_schema.ConversationSchema) -> conversation_schema.ConversationResponse:
+from ..db.schemas import conversation_schema
+from ..core import exceptions, utils
+from ..db.model import conversation_model, staff_model, human_hand_off_model
+
+
+async def create_conversation(db: AsyncSession, conversation_data: conversation_schema.ConversationSchema) -> conversation_schema.ConversationResponse:
     new_conversation = conversation_model.Conversation(
         customer_id=conversation_data.customer_id,
         conversation_type=conversation_data.conversation_type,
@@ -17,15 +19,19 @@ def create_conversation(db: Session, conversation_data: conversation_schema.Conv
     )
 
     db.add(new_conversation)
-    db.commit()
-    db.refresh(new_conversation)
+    await db.commit()
+    await db.refresh(new_conversation)
 
     return conversation_schema.ConversationResponse.model_validate(new_conversation)
 
 
-def get_conversation_by_id(db: Session, conversation_id: str) -> conversation_schema.ConversationResponse:
-    conversation = db.query(conversation_model.Conversation).filter(
-        conversation_model.Conversation.id == conversation_id).first()
+async def get_conversation_by_id(db: AsyncSession, conversation_id: str) -> conversation_schema.ConversationResponse:
+    result = await db.execute(
+        select(conversation_model.Conversation).filter(
+            conversation_model.Conversation.id == conversation_id
+        )
+    )
+    conversation = result.scalars().first()
 
     if not conversation:
         raise exceptions.NotFoundException("Conversation not found.")
@@ -33,56 +39,33 @@ def get_conversation_by_id(db: Session, conversation_id: str) -> conversation_sc
     return conversation_schema.ConversationResponse.model_validate(conversation)
 
 
-def get_all_conversations(db: Session) -> list[conversation_schema.ConversationResponse]:
-    conversations = db.query(conversation_model.Conversation).all()
+async def get_all_conversations(db: AsyncSession) -> list[conversation_schema.ConversationResponse]:
+    result = await db.execute(select(conversation_model.Conversation))
+    conversations = result.scalars().all()
     return [conversation_schema.ConversationResponse.model_validate(c) for c in conversations]
 
 
-def get_conversations_by_customer_id(db: Session, customer_id: str) -> list[conversation_schema.ConversationResponse]:
-    conversations = db.query(conversation_model.Conversation).filter(
-        conversation_model.Conversation.customer_id == customer_id).all()
+async def get_conversations_by_customer_id(db: AsyncSession, customer_id: str) -> list[conversation_schema.ConversationResponse]:
+    result = await db.execute(
+        select(conversation_model.Conversation).filter(
+            conversation_model.Conversation.customer_id == customer_id
+        )
+    )
+    conversations = result.scalars().all()
     return [conversation_schema.ConversationResponse.model_validate(c) for c in conversations]
 
 
-# def disable_ai(db: Session, conversation_id: str) -> conversation_schema.ConversationResponse:
-#     conversation = db.query(conversation_model.Conversation).filter(
-#         conversation_model.Conversation.id == conversation_id).first()
-
-#     if not conversation:
-#         raise exceptions.NotFoundException("Conversation not found.")
-
-#     conversation.ai_enabled = False
-#     conversation.handoff_to_human = True
-    
-#     db.commit()
-#     db.refresh(conversation)
-
-#     return conversation_schema.ConversationResponse.model_validate(conversation)
-
-
-# def enable_ai(db: Session, conversation_id: str) -> conversation_schema.ConversationResponse:
-#     conversation = db.query(conversation_model.Conversation).filter(
-#         conversation_model.Conversation.id == conversation_id).first()
-
-#     if not conversation:
-#         raise exceptions.NotFoundException("Conversation not found.")
-
-#     conversation.ai_enabled = True
-#     conversation.handoff_to_human = False
-    
-#     db.commit()
-#     db.refresh(conversation)
-
-#     return conversation_schema.ConversationResponse.model_validate(conversation)
-
-
-def start_handoff(db: Session, conversation_id: str, reason: str = None) -> conversation_schema.ConversationResponse:
-    conversation = db.query(conversation_model.Conversation).filter(
-        conversation_model.Conversation.id == conversation_id).first()
+async def start_handoff(db: AsyncSession, conversation_id: str, reason: str = None) -> conversation_schema.ConversationResponse:
+    result = await db.execute(
+        select(conversation_model.Conversation).filter(
+            conversation_model.Conversation.id == conversation_id
+        )
+    )
+    conversation = result.scalars().first()
 
     if not conversation:
         raise exceptions.NotFoundException("Conversation not found.")
-    
+
     if conversation.handoff_to_human and conversation.handoff_status == utils.HandOffStatus.ACTIVE.value:
         raise exceptions.ConflictException("Handoff is already in progress for this conversation.")
 
@@ -90,24 +73,31 @@ def start_handoff(db: Session, conversation_id: str, reason: str = None) -> conv
     conversation.ai_enabled = False
     conversation.assigned_staff_id = None
     conversation.handoff_status = utils.HandOffStatus.PENDING.value
-    conversation.handoff_started_at = datetime.now(tz=timezone.utc) if not conversation.handoff_started_at else conversation.handoff_started_at
+    conversation.handoff_started_at = datetime.now(tz=timezone.utc).replace(tzinfo=None) if not conversation.handoff_started_at else conversation.handoff_started_at
     conversation.handoff_ended_at = None
     conversation.handoff_reason = reason
-    
-    db.commit()
-    db.refresh(conversation)
+
+    await db.commit()
+    await db.refresh(conversation)
 
     return conversation_schema.ConversationResponse.model_validate(conversation)
 
 
-def activate_handoff_for_staff(db: Session, conversation_id: str, staff_id: str) -> conversation_schema.ConversationResponse:
-    conversation = db.query(conversation_model.Conversation).filter(
-        conversation_model.Conversation.id == conversation_id).first()
+async def activate_handoff_for_staff(db: AsyncSession, conversation_id: str, staff_id: str) -> conversation_schema.ConversationResponse:
+    result = await db.execute(
+        select(conversation_model.Conversation).filter(
+            conversation_model.Conversation.id == conversation_id
+        )
+    )
+    conversation = result.scalars().first()
 
     if not conversation:
         raise exceptions.NotFoundException("Conversation not found.")
-    
-    staff = db.query(staff_model.Staff).filter(staff_model.Staff.id == staff_id).first()
+
+    staff_result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.id == staff_id)
+    )
+    staff = staff_result.scalars().first()
     if not staff:
         raise exceptions.NotFoundException("Staff member not found.")
 
@@ -116,16 +106,20 @@ def activate_handoff_for_staff(db: Session, conversation_id: str, staff_id: str)
     conversation.assigned_staff_id = staff.id
     conversation.handoff_status = utils.HandOffStatus.ACTIVE.value
     conversation.handoff_ended_at = None
-    
-    db.commit()
-    db.refresh(conversation)
-    
+
+    await db.commit()
+    await db.refresh(conversation)
+
     return conversation_schema.ConversationResponse.model_validate(conversation)
 
 
-def resume_ai(db: Session, conversation_id: str) -> conversation_schema.ConversationResponse:
-    conversation = db.query(conversation_model.Conversation).filter(
-        conversation_model.Conversation.id == conversation_id).first()
+async def resume_ai(db: AsyncSession, conversation_id: str) -> conversation_schema.ConversationResponse:
+    result = await db.execute(
+        select(conversation_model.Conversation).filter(
+            conversation_model.Conversation.id == conversation_id
+        )
+    )
+    conversation = result.scalars().first()
 
     if not conversation:
         raise exceptions.NotFoundException("Conversation not found.")
@@ -134,28 +128,33 @@ def resume_ai(db: Session, conversation_id: str) -> conversation_schema.Conversa
     conversation.ai_enabled = True
     conversation.assigned_staff_id = None
     conversation.handoff_status = utils.HandOffStatus.RESOLVED.value
-    conversation.handoff_ended_at = datetime.now(tz=timezone.utc)
+    conversation.handoff_ended_at = datetime.now(tz=timezone.utc).replace(tzinfo=None)
     conversation.handoff_reason = None
 
-    # Close the active handoff record so both rows stay in sync
-    active_handoff = db.query(human_hand_off_model.HumanHandOff).filter(
-        human_hand_off_model.HumanHandOff.conversation_id == conversation_id,
-        human_hand_off_model.HumanHandOff.status == utils.HandOffStatus.ACTIVE.value,
-    ).first()
+    handoff_result = await db.execute(
+        select(human_hand_off_model.HumanHandOff).filter(
+            human_hand_off_model.HumanHandOff.conversation_id == conversation_id,
+            human_hand_off_model.HumanHandOff.status == utils.HandOffStatus.ACTIVE.value,
+        )
+    )
+    active_handoff = handoff_result.scalars().first()
     if active_handoff:
         active_handoff.status = utils.HandOffStatus.RESOLVED.value
-        active_handoff.resolved_at = datetime.now(tz=timezone.utc)
+        active_handoff.resolved_at = datetime.now(tz=timezone.utc).replace(tzinfo=None)
 
-    db.commit()
-    db.refresh(conversation)
+    await db.commit()
+    await db.refresh(conversation)
 
     return conversation_schema.ConversationResponse.model_validate(conversation)
 
 
-
-def update_conversation(db: Session, conversation_id: str, conversation_data: conversation_schema.ConversationSchema) -> conversation_schema.ConversationResponse:
-    conversation = db.query(conversation_model.Conversation).filter(
-        conversation_model.Conversation.id == conversation_id).first()
+async def update_conversation(db: AsyncSession, conversation_id: str, conversation_data: conversation_schema.ConversationSchema) -> conversation_schema.ConversationResponse:
+    result = await db.execute(
+        select(conversation_model.Conversation).filter(
+            conversation_model.Conversation.id == conversation_id
+        )
+    )
+    conversation = result.scalars().first()
 
     if not conversation:
         raise exceptions.NotFoundException("Conversation not found.")
@@ -164,18 +163,22 @@ def update_conversation(db: Session, conversation_id: str, conversation_data: co
     conversation.conversation_type = conversation_data.conversation_type
     conversation.status = conversation_data.status
 
-    db.commit()
-    db.refresh(conversation)
+    await db.commit()
+    await db.refresh(conversation)
 
     return conversation_schema.ConversationResponse.model_validate(conversation)
 
 
-def delete_conversation(db: Session, conversation_id: str):
-    conversation = db.query(conversation_model.Conversation).filter(
-        conversation_model.Conversation.id == conversation_id).first()
+async def delete_conversation(db: AsyncSession, conversation_id: str):
+    result = await db.execute(
+        select(conversation_model.Conversation).filter(
+            conversation_model.Conversation.id == conversation_id
+        )
+    )
+    conversation = result.scalars().first()
 
     if not conversation:
         raise exceptions.NotFoundException("Conversation not found.")
 
-    db.delete(conversation)
-    db.commit()
+    await db.delete(conversation)
+    await db.commit()

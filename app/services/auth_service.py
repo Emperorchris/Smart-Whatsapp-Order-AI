@@ -3,7 +3,8 @@ import jwt
 from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 from typing import Annotated
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 
@@ -49,16 +50,19 @@ def decode_access_token(token: str) -> dict:
         raise exceptions.UnauthorizedException("Invalid or expired token.")
 
 
-def get_current_staff(
+async def get_current_staff(
     token: Annotated[str, Depends(oauth2_scheme)],
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> staff_schema.StaffResponse:
     payload = decode_access_token(token)
     staff_id: str = payload.get("sub")
     if not staff_id:
         raise exceptions.UnauthorizedException("Invalid token payload.")
 
-    staff = db.query(staff_model.Staff).filter(staff_model.Staff.id == staff_id).first()
+    result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.id == staff_id)
+    )
+    staff = result.scalars().first()
     if not staff:
         raise exceptions.UnauthorizedException("Staff member no longer exists.")
     if not staff.is_active:
@@ -75,14 +79,14 @@ def require_admin(
     return current_staff
 
 
-def login(db: Session, credentials: staff_schema.StaffLoginSchema) -> staff_schema.TokenResponse:
-    staff = staff_service.authenticate_staff(db, credentials.email, credentials.password)
+async def login(db: AsyncSession, credentials: staff_schema.StaffLoginSchema) -> staff_schema.TokenResponse:
+    staff = await staff_service.authenticate_staff(db, credentials.email, credentials.password)
 
     access_token = create_access_token(str(staff.id), staff.role)
     refresh_token = create_refresh_token(str(staff.id))
 
     staff.refresh_token_hash = _hash_token(refresh_token)
-    db.commit()
+    await db.commit()
 
     return staff_schema.TokenResponse(
         access_token=access_token,
@@ -91,7 +95,7 @@ def login(db: Session, credentials: staff_schema.StaffLoginSchema) -> staff_sche
     )
 
 
-def refresh(db: Session, data: staff_schema.RefreshTokenSchema) -> staff_schema.TokenResponse:
+async def refresh(db: AsyncSession, data: staff_schema.RefreshTokenSchema) -> staff_schema.TokenResponse:
     try:
         payload = jwt.decode(data.refresh_token, Config.SECRET_KEY, algorithms=[Config.ALGORITHM])
         if payload.get("type") != "refresh":
@@ -100,7 +104,10 @@ def refresh(db: Session, data: staff_schema.RefreshTokenSchema) -> staff_schema.
         raise exceptions.UnauthorizedException("Invalid or expired refresh token.")
 
     staff_id: str = payload.get("sub")
-    staff = db.query(staff_model.Staff).filter(staff_model.Staff.id == staff_id).first()
+    result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.id == staff_id)
+    )
+    staff = result.scalars().first()
 
     if not staff or not staff.refresh_token_hash:
         raise exceptions.UnauthorizedException("Refresh token has been revoked.")
@@ -109,12 +116,11 @@ def refresh(db: Session, data: staff_schema.RefreshTokenSchema) -> staff_schema.
     if not _verify_token_hash(data.refresh_token, staff.refresh_token_hash):
         raise exceptions.UnauthorizedException("Refresh token mismatch.")
 
-    # Rotate: issue new tokens and store new hash
     access_token = create_access_token(str(staff.id), staff.role)
     new_refresh_token = create_refresh_token(str(staff.id))
 
     staff.refresh_token_hash = _hash_token(new_refresh_token)
-    db.commit()
+    await db.commit()
 
     return staff_schema.TokenResponse(
         access_token=access_token,
@@ -123,13 +129,15 @@ def refresh(db: Session, data: staff_schema.RefreshTokenSchema) -> staff_schema.
     )
 
 
-def logout(db: Session, staff_id: str):
-    staff = db.query(staff_model.Staff).filter(staff_model.Staff.id == staff_id).first()
+async def logout(db: AsyncSession, staff_id: str):
+    result = await db.execute(
+        select(staff_model.Staff).filter(staff_model.Staff.id == staff_id)
+    )
+    staff = result.scalars().first()
     if staff:
         staff.refresh_token_hash = None
-        db.commit()
+        await db.commit()
 
 
-# Reusable dependency type aliases
 CurrentStaff = Annotated[staff_schema.StaffResponse, Depends(get_current_staff)]
 AdminOnly = Annotated[staff_schema.StaffResponse, Depends(require_admin)]

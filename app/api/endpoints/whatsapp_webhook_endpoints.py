@@ -1,94 +1,222 @@
+import asyncio
+import logging
 from fastapi import APIRouter, Request, Response
-from langchain_core.messages import HumanMessage
 from ...core.dependencies import DBSession
+from ...core.config import Config
 from ...core import utils, exceptions
+from ...db.db_engine import AsyncSessionLocal
 from ...services import (
     whatsapp_service,
     whatsapp_staff_webhook_service,
     whatsapp_webhook_processing_service,
+    customer_message_handler_service,
 )
-from ...ai.graph import agent_graph
 
+
+logger = logging.getLogger(__name__)
+
+# Per-conversation locks to prevent concurrent processing of messages
+# from the same customer (avoids response mixing/race conditions)
+_conversation_locks: dict[str, asyncio.Lock] = {}
 
 whatsapp_webhook_router = APIRouter(
     prefix="/webhooks/whatsapp", tags=["WhatsApp Webhook"]
 )
 
 
+# ──────────────────────────────────────────────────────────────
+# GET — Meta webhook verification
+# ──────────────────────────────────────────────────────────────
+
+@whatsapp_webhook_router.get("")
+async def verify_webhook(request: Request):
+    """Meta sends a GET request to verify the webhook URL during setup.
+    We must return the hub.challenge value if the verify token matches."""
+    params = request.query_params
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+
+    if mode == "subscribe" and token == Config.META_WHATSAPP_VERIFY_TOKEN:
+        logger.info("Webhook verified successfully.")
+        return Response(content=challenge, media_type="text/plain")
+
+    logger.warning("Webhook verification failed. Token mismatch.")
+    return Response(content="Forbidden", status_code=403)
+
+
+# ──────────────────────────────────────────────────────────────
+# POST — Incoming messages from Meta Cloud API
+# ──────────────────────────────────────────────────────────────
+
 @whatsapp_webhook_router.post("")
 async def whatsapp_webhook(db: DBSession, request: Request):
-    form = await request.form()
+    body = await request.json()
 
-    payload = whatsapp_webhook_processing_service.parse_incoming_payload(form)
+    # Meta sends status updates too (delivered, read, etc.) — ignore those
+    payload = whatsapp_webhook_processing_service.parse_incoming_payload(body)
+    if not payload:
+        return Response(content="OK", status_code=200)
 
     # 1. Prevent duplicate processing
-    is_new_event = whatsapp_webhook_processing_service.ensure_not_duplicate_event(
+    is_new_event = await whatsapp_webhook_processing_service.ensure_not_duplicate_event(
         db, payload.message_sid
     )
     if not is_new_event:
-        return Response(content="", media_type="text/xml")
+        return Response(content="OK", status_code=200)
 
-    # 3. Identify sender — unknown numbers are treated as new customers
+    # 2. Identify sender — unknown numbers are treated as new customers
     try:
-        sender_type = whatsapp_service.identify_sender(payload.sender_number, db)
+        sender_type = await whatsapp_service.identify_sender(payload.sender_number, db)
     except exceptions.NotFoundException:
         sender_type = utils.MessageSenderType.CUSTOMER.value
 
-    # 4. Handle staff messages
+    # 3. Handle staff messages
     if sender_type == utils.MessageSenderType.STAFF.value:
-        whatsapp_staff_webhook_service.handle_staff_incoming_message(
+        await whatsapp_staff_webhook_service.handle_staff_incoming_message(
             db,
             payload.sender_number,
             payload.body,
             payload.message_sid,
         )
-        return Response(content="", media_type="text/xml")
+        return Response(content="OK", status_code=200)
 
-    # 5. Get or create customer
-    customer = whatsapp_webhook_processing_service.get_or_create_customer(db, payload)
+    # 4. Get or create customer
+    customer = await whatsapp_webhook_processing_service.get_or_create_customer(db, payload)
 
-    # 6. Get or create active conversation
+    # 5. Get or create active conversation
     active_conversation = (
-        whatsapp_webhook_processing_service.get_or_create_active_conversation(
+        await whatsapp_webhook_processing_service.get_or_create_active_conversation(
             db, str(customer.id)
         )
     )
 
-    # 7. Log inbound message
-    whatsapp_webhook_processing_service.log_customer_inbound_message(
-        db,
-        active_conversation.id,
-        payload,
-    )
+    # 6. Acquire per-conversation lock to prevent concurrent processing
+    conv_key = str(active_conversation.id)
+    if conv_key not in _conversation_locks:
+        _conversation_locks[conv_key] = asyncio.Lock()
 
-    # 8. If handoff is active, AI is disabled — do nothing, staff handles it
-    if active_conversation.handoff_to_human:
-        return Response(content="", media_type="text/xml")
+    lock = _conversation_locks[conv_key]
+    async with lock:
+        await customer_message_handler_service.process_customer_message(
+            db, payload, customer, active_conversation
+        )
 
-    # 9. TODO: Run the LangGraph agent and send reply
-    initial_state = {
-        "messages": [HumanMessage(content=payload.body)],
-        "customer_whatsapp_number": payload.sender_number,
-        "customer_name": payload.profile_name,
-        "customer_display_name": payload.profile_name,
-        "customer_wa_id": payload.wa_id,
-        "customer_id": str(customer.id),
-        "conversation_id": str(active_conversation.id),
-    }
-    
-    result = agent_graph.run_agent(initial_state, db=db)
-    
-    ai_reply = result["messages"][-1].content if result["messages"] else "Sorry, I couldn't process your request right now."
-    
-    whatsapp_service.send_message(
-        to=payload.sender_number,
-        body=ai_reply,
-    )
-    
-    # whatsapp_webhook_processing_service.log_customer_outbound_message(
-    #     db,
-    #     active_conversation.id,
-    #     ai_reply,
-    # )
-    
-    return Response(content=ai_reply, media_type="text/xml")
+    # Clean up idle locks so the dict doesn't grow forever
+    if not lock.locked():
+        _conversation_locks.pop(conv_key, None)
+
+    return Response(content="OK", status_code=200)
+
+
+
+
+
+
+
+
+# ──────────────────────────────────────────────────────────────
+# Twilio webhook endpoint (commented out — kept for reference)
+# ──────────────────────────────────────────────────────────────
+
+# @whatsapp_webhook_router.post("")
+# async def whatsapp_webhook(db: DBSession, request: Request):
+#     form = await request.form()
+#
+#     payload = whatsapp_webhook_processing_service.parse_incoming_payload(form)
+#
+#     # 1. Prevent duplicate processing
+#     is_new_event = whatsapp_webhook_processing_service.ensure_not_duplicate_event(
+#         db, payload.message_sid
+#     )
+#     if not is_new_event:
+#         return Response(content="", media_type="text/xml")
+#
+#     # 3. Identify sender — unknown numbers are treated as new customers
+#     try:
+#         sender_type = whatsapp_service.identify_sender(payload.sender_number, db)
+#     except exceptions.NotFoundException:
+#         sender_type = utils.MessageSenderType.CUSTOMER.value
+#
+#     # 4. Handle staff messages
+#     if sender_type == utils.MessageSenderType.STAFF.value:
+#         whatsapp_staff_webhook_service.handle_staff_incoming_message(
+#             db,
+#             payload.sender_number,
+#             payload.body,
+#             payload.message_sid,
+#         )
+#         return Response(content="", media_type="text/xml")
+#
+#     # 5. Get or create customer
+#     customer = whatsapp_webhook_processing_service.get_or_create_customer(db, payload)
+#
+#     # 6. Get or create active conversation
+#     active_conversation = (
+#         whatsapp_webhook_processing_service.get_or_create_active_conversation(
+#             db, str(customer.id)
+#         )
+#     )
+#
+#     # 7. Log message
+#     whatsapp_webhook_processing_service.log_inbound_message(
+#         db,
+#         active_conversation.id,
+#         utils.MessageDirection.INBOUND.value,
+#         payload,
+#     )
+#
+#     # 8. If handoff is active, AI is disabled — do nothing, staff handles it
+#     if active_conversation.handoff_to_human:
+#         return Response(content="", media_type="text/xml")
+#
+#     # 9. Run the LangGraph agent and send reply
+#     history = load_conversation_history(db, str(active_conversation.id))
+#     initial_state = {
+#         "messages": history,
+#         "customer_whatsapp_number": payload.sender_number,
+#         "customer_name": payload.profile_name,
+#         "customer_display_name": payload.profile_name,
+#         "customer_wa_id": payload.wa_id,
+#         "customer_id": str(customer.id),
+#         "conversation_id": str(active_conversation.id),
+#     }
+#
+#     result = agent_graph.run_agent(
+#         initial_state,
+#         db=db,
+#         customer_id=str(customer.id),
+#         conversation_id=str(active_conversation.id),
+#     )
+#
+#     ai_reply = (
+#         result["messages"][-1].content
+#         if result["messages"]
+#         else "Sorry, I couldn't process your request right now."
+#     )
+#
+#     # Extract media URLs from tool results embedded in messages
+#     media_urls = []
+#     for msg in result["messages"]:
+#         content = getattr(msg, "content", "") or ""
+#         match = re.search(r"\[MEDIA_URLS\](.*?)\[/MEDIA_URLS\]", content)
+#         if match:
+#             media_urls.extend(match.group(1).split(","))
+#
+#     # Clean the tag from the final reply so the customer doesn't see it
+#     ai_reply = re.sub(r"\n*\[MEDIA_URLS\].*?\[/MEDIA_URLS\]", "", ai_reply).strip()
+#
+#     whatsapp_service.send_message(
+#         to=payload.sender_number,
+#         body=ai_reply,
+#         media_urls=media_urls[:10] if media_urls else None,
+#     )
+#
+#     whatsapp_webhook_processing_service.log_outbound_message(
+#         db,
+#         conversation_id=active_conversation.id,
+#         content=ai_reply,
+#         media_urls=media_urls if media_urls else None,
+#     )
+#
+#     return Response(content=ai_reply, media_type="text/xml")

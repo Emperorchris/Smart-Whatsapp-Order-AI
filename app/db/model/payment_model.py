@@ -10,7 +10,7 @@ class Payment(Base):
 
     id = Column(UUID, primary_key=True, default=uuid.uuid4, index=True, unique=True)
 
-    order_id = Column(ForeignKey("orders.id"))
+    order_id = Column(ForeignKey("orders.id", ondelete="CASCADE"))
 
     payment_reference = Column(String, unique=True)
 
@@ -25,4 +25,4 @@ class Payment(Base):
 
     paid_at = Column(DateTime, nullable=True)
 
-    created_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))

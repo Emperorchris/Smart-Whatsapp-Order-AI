@@ -7,6 +7,8 @@ class MessageType(enum.Enum):
     VIDEO = "video"
     AUDIO = "audio"
     DOCUMENT = "document"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
 
 
 class MessageStatus(enum.Enum):
@@ -114,6 +116,7 @@ class MessageSenderType(enum.Enum):
     CUSTOMER = "customer"
     AI = "ai"
     STAFF = "staff"
+    TOOL = "tool"
 
 
 class StaffConversationCommand(enum.Enum):
@@ -149,3 +152,10 @@ class OrderActionType(enum.Enum):
     PLACE_ORDER = "place_order"
     CHECK_STATUS = "check_status"
     CANCEL_ORDER = "cancel_order"
+    
+    
+class DeliveryStatus(enum.Enum):
+    PENDING = "pending"
+    SHIPPED = "shipped"
+    DELIVERED = "delivered"
+    RETURNED = "returned"

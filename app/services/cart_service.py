@@ -1,25 +1,29 @@
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..db.schemas import cart_schema
 from ..core import exceptions
 from ..db.model import carts_model
-from sqlalchemy.orm import Session
 
 
-def create_cart(db: Session, cart_data: cart_schema.CartSchema) -> cart_schema.CartResponse:
+async def create_cart(db: AsyncSession, cart_data: cart_schema.CartSchema) -> cart_schema.CartResponse:
     new_cart = carts_model.Cart(
         customer_id=cart_data.customer_id,
         status=cart_data.status
     )
 
     db.add(new_cart)
-    db.commit()
-    db.refresh(new_cart)
+    await db.commit()
+    await db.refresh(new_cart)
 
     return cart_schema.CartResponse.model_validate(new_cart)
 
 
-def get_cart_by_id(db: Session, cart_id: str) -> cart_schema.CartResponse:
-    cart = db.query(carts_model.Cart).filter(
-        carts_model.Cart.id == cart_id).first()
+async def get_cart_by_id(db: AsyncSession, cart_id: str) -> cart_schema.CartResponse:
+    result = await db.execute(
+        select(carts_model.Cart).filter(carts_model.Cart.id == cart_id)
+    )
+    cart = result.scalars().first()
 
     if not cart:
         raise exceptions.NotFoundException("Cart not found.")
@@ -27,25 +31,32 @@ def get_cart_by_id(db: Session, cart_id: str) -> cart_schema.CartResponse:
     return cart_schema.CartResponse.model_validate(cart)
 
 
-def get_all_carts(db: Session) -> list[cart_schema.CartResponse]:
-    carts = db.query(carts_model.Cart).all()
+async def get_all_carts(db: AsyncSession) -> list[cart_schema.CartResponse]:
+    result = await db.execute(select(carts_model.Cart))
+    carts = result.scalars().all()
     return [cart_schema.CartResponse.model_validate(c) for c in carts]
 
 
-def get_cart_by_customer_id(db: Session, customer_id: str) -> cart_schema.CartResponse:
-    cart = db.query(carts_model.Cart).filter(
-        carts_model.Cart.customer_id == customer_id,
-        carts_model.Cart.status == "active"
-    ).first()
+async def get_cart_by_customer_id(db: AsyncSession, customer_id: str) -> cart_schema.CartResponse:
+    result = await db.execute(
+        select(carts_model.Cart).filter(
+            carts_model.Cart.customer_id == customer_id,
+            carts_model.Cart.status == "active"
+        )
+    )
+    cart = result.scalars().first()
 
     if not cart:
         raise exceptions.NotFoundException("Active cart not found for this customer.")
 
     return cart_schema.CartResponse.model_validate(cart)
 
-def update_cart(db: Session, cart_id: str, cart_data: cart_schema.CartSchema) -> cart_schema.CartResponse:
-    cart = db.query(carts_model.Cart).filter(
-        carts_model.Cart.id == cart_id).first()
+
+async def update_cart(db: AsyncSession, cart_id: str, cart_data: cart_schema.CartSchema) -> cart_schema.CartResponse:
+    result = await db.execute(
+        select(carts_model.Cart).filter(carts_model.Cart.id == cart_id)
+    )
+    cart = result.scalars().first()
 
     if not cart:
         raise exceptions.NotFoundException("Cart not found.")
@@ -53,30 +64,20 @@ def update_cart(db: Session, cart_id: str, cart_data: cart_schema.CartSchema) ->
     cart.customer_id = cart_data.customer_id
     cart.status = cart_data.status
 
-    db.commit()
-    db.refresh(cart)
+    await db.commit()
+    await db.refresh(cart)
 
     return cart_schema.CartResponse.model_validate(cart)
 
 
-def delete_cart(db: Session, cart_id: str):
-    cart = db.query(carts_model.Cart).filter(
-        carts_model.Cart.id == cart_id).first()
+async def delete_cart(db: AsyncSession, cart_id: str):
+    result = await db.execute(
+        select(carts_model.Cart).filter(carts_model.Cart.id == cart_id)
+    )
+    cart = result.scalars().first()
 
     if not cart:
         raise exceptions.NotFoundException("Cart not found.")
 
-    db.delete(cart)
-    db.commit()
-
-
-
-# def clear_cart(db: Session, cart_id: str):
-#     cart = db.query(carts_model.Cart).filter(
-#         carts_model.Cart.id == cart_id).first()
-
-#     if not cart:
-#         raise exceptions.NotFoundException("Cart not found.")
-
-#     cart.cart_items.clear()
-#     db.commit()
+    await db.delete(cart)
+    await db.commit()

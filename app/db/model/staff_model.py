@@ -26,6 +26,5 @@ class Staff(Base):
     human_hand_offs = relationship(
         "HumanHandOff", back_populates="staff", foreign_keys="HumanHandOff.assigned_staff_id")
     created_at = Column(DateTime, nullable=False,
-                        default=datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime, nullable=False, default=datetime.now(
-        tz=timezone.utc), onupdate=datetime.now(tz=timezone.utc))
+                        default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))

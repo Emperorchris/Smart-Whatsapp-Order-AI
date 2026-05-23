@@ -16,5 +16,5 @@ class ProductVariant(Base):
     low_stock_threshold = Column(Integer, default=5)
     is_active = Column(Boolean, default=True)
 
-    created_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc), onupdate=datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))

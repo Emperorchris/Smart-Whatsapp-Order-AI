@@ -16,11 +16,12 @@ class CartItem(Base):
     cart = relationship("Cart", back_populates="cart_items")
 
     product_id = Column(ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    variant_id = Column(ForeignKey("product_variants.id", ondelete="SET NULL"), nullable=True)
     quantity = Column(Integer, nullable=False, default=1)
 
     unit_price = Column(Numeric(12, 2))
 
     subtotal = Column(Numeric(12, 2))
     
-    created_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc), onupdate=datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))

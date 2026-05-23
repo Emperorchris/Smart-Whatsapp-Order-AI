@@ -24,7 +24,7 @@ class Conversation(Base):
         String, nullable=False, default=utils.ConversationType.AI_KNOWLEDGE_BASED.value)
     status = Column(String, nullable=False,
                     default=utils.ConversationStatus.ACTIVE.value)
-    started_at = Column(DateTime, default=datetime.now(tz=timezone.utc))
+    started_at = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
     ended_at = Column(DateTime, nullable=True)
     handoff_started_at = Column(DateTime, nullable=True)
     handoff_ended_at = Column(DateTime, nullable=True)

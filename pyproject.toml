@@ -13,6 +13,7 @@ dependencies = [
     "fastapi[standard]>=0.136.1",
     "httpx>=0.28.1",
     "langchain>=1.2.17",
+    "langchain-anthropic>=1.4.3",
     "langchain-openai>=1.2.1",
     "langgraph>=1.1.10",
     "loguru>=0.7.3",
@@ -29,5 +30,6 @@ dependencies = [
     "sqlalchemy>=2.0.49",
     "supabase>=2.30.0",
     "tiktoken>=0.12.0",
+    "twilio>=9.10.9",
     "unstructured[all-docs]>=0.22.27",
 ]

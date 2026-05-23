@@ -14,13 +14,15 @@ class Product(Base):
     price = Column(Numeric(12, 2))
     sku = Column(String, unique=True, nullable=True)
     category_id = Column(ForeignKey("categories.id", ondelete="SET NULL"), nullable=True)
-    image_urls = Column(JSON, nullable=True)  # List of image URLs
-    video_urls = Column(JSON, nullable=True)  # List of video URLs
-    
-    live_image_urls = Column(JSON, nullable=True)  # List of live image URLs (e.g., from a live stream)
-    live_video_urls = Column(JSON, nullable=True)  # List of live video URLs (e.g., from a live stream)
-    
+    # image_urls = Column(JSON, nullable=True)  # List of image URLs
+    # video_urls = Column(JSON, nullable=True)  # List of video URLs
+
+    # live_image_urls = Column(JSON, nullable=True)  # List of live image URLs (e.g., from a live stream)
+    # live_video_urls = Column(JSON, nullable=True)  # List of live video URLs (e.g., from a live stream)
+
+    media = Column(JSON, nullable=True)  # List of {"url": "...", "type": "image|video|live_image|live_video"}
+
     is_active = Column(Boolean, default=True)
 
-    created_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc), onupdate=datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))

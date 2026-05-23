@@ -23,13 +23,13 @@ class HumanHandOff(Base):
     status = Column(String, nullable=False, default=utils.HandOffStatus.PENDING.value)
     claimed_at = Column(DateTime, nullable=True)
     requested_at = Column(
-        DateTime, nullable=False, default=datetime.now(tz=timezone.utc)
+        DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None)
     )
     resolved_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, nullable=False,default=datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.now(tz=timezone.utc),
-        onupdate=datetime.now(tz=timezone.utc),
+        default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None),
     )

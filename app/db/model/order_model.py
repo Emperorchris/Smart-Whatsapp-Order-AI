@@ -11,7 +11,7 @@ class Order(Base):
 
     id = Column(UUID, primary_key=True, default=uuid.uuid4, index=True, unique=True)
 
-    customer_id = Column(ForeignKey("customers.id"))
+    customer_id = Column(ForeignKey("customers.id", ondelete="CASCADE"))
 
     order_number = Column(String, unique=True)
     
@@ -30,7 +30,7 @@ class Order(Base):
     
     extra_metadata = Column(JSON, nullable=True)  # For any additional order info
     
-    order_items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    order_items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan", lazy="selectin")
 
-    created_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc), onupdate=datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))

@@ -17,5 +17,5 @@ class Customer(Base):
     customer_status = Column(String, nullable=False, default=utils.CustomerStatus.ACTIVE.value)
     customer_segment = Column(String, nullable=True, default=utils.CustomerSegment.NEW.value)
     extra_metadata = Column("metadata", JSON, nullable=True, default={})  # Store additional customer info
-    created_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc))
-    updated_at = Column(DateTime, nullable=False, default=datetime.now(tz=timezone.utc), onupdate=datetime.now(tz=timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
