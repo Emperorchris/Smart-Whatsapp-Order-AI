@@ -1,7 +1,13 @@
 from fastapi import APIRouter
+from pydantic import BaseModel
 from ...core.dependencies import DBSession
 from ...services import order_service, order_item_service
-from ...db.schemas import order_schema, order_item_schema
+from ...db.schemas import order_schema, order_item_schema, customer_address_schema
+from ...core import utils
+
+
+class UpdateStatusBody(BaseModel):
+    status: utils.OrderStatus
 
 order_router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -36,6 +42,21 @@ async def get_orders_by_customer(customer_id: str, db: DBSession):
 @order_router.put("/{order_id}", response_model=order_schema.OrderResponse)
 async def update_order(order_id: str, order_data: order_schema.OrderSchema, db: DBSession):
     return await order_service.update_order(db, order_id, order_data)
+
+
+@order_router.patch("/{order_id}/status", response_model=order_schema.OrderResponse)
+async def update_order_status(order_id: str, body: UpdateStatusBody, db: DBSession):
+    return await order_service.update_order_status(db, order_id, body.status)
+
+
+@order_router.patch("/{order_id}/address", response_model=order_schema.OrderResponse)
+async def update_order_address(order_id: str, address_data: customer_address_schema.CustomerAddressSchema, db: DBSession):
+    return await order_service.update_order_address(db, order_id, address_data)
+
+
+@order_router.patch("/{order_id}/cancel", response_model=order_schema.OrderResponse)
+async def cancel_order(order_id: str, db: DBSession):
+    return await order_service.cancel_order(db, order_id)
 
 
 @order_router.delete("/{order_id}", status_code=204)

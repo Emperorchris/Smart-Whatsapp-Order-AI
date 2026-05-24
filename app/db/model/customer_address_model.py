@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import uuid
 from sqlalchemy import Boolean, Column, String, DateTime, ForeignKey, Uuid
 from ..base import Base
+from ...core import utils
 
 
 class CustomerAddress(Base):
@@ -11,7 +12,7 @@ class CustomerAddress(Base):
 
     customer_id = Column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
 
-    label = Column(String, nullable=True)  # e.g. "Home", "Office", "Shop"
+    label = Column(String, nullable=True, default=utils.AddressLabel.HOME.value)  # home/office/shop/other
     full_name = Column(String, nullable=True)  # recipient name if different from customer
     phone_number = Column(String, nullable=True)  # delivery contact number
     address_line = Column(String, nullable=False)  # street address

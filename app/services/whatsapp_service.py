@@ -177,6 +177,97 @@ async def send_product_message(to: str, caption: str, media_urls: list[str]) -> 
     return {"status": "sent", "to": phone, "media_ids": sent_ids}
 
 
+async def send_interactive_buttons(
+    to: str,
+    body: str,
+    buttons: list[dict[str, str]],
+    header: str = "",
+    footer: str = "",
+) -> dict[str, Any]:
+    """Send an interactive button message (max 3 buttons).
+    buttons: [{"id": "btn_home", "title": "Home"}, ...]"""
+
+    phone = _normalize_phone(to)
+    headers = _meta_headers()
+
+    action_buttons = [
+        {"type": "reply", "reply": {"id": btn["id"], "title": btn["title"]}}
+        for btn in buttons[:3]
+    ]
+
+    payload: dict[str, Any] = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body},
+            "action": {"buttons": action_buttons},
+        },
+    }
+
+    if header:
+        payload["interactive"]["header"] = {"type": "text", "text": header}
+    if footer:
+        payload["interactive"]["footer"] = {"text": footer}
+
+    try:
+        resp = await _http_client.post(META_API_BASE, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPError as exc:
+        logger.error("Failed to send interactive buttons: %s", exc)
+        raise exceptions.BadRequestException("Failed to send interactive message.", error_detail=str(exc))
+
+    message_id = data.get("messages", [{}])[0].get("id")
+    return {"message_id": message_id, "status": "sent", "to": phone}
+
+
+async def send_interactive_list(
+    to: str,
+    body: str,
+    button_text: str,
+    sections: list[dict[str, Any]],
+    header: str = "",
+    footer: str = "",
+) -> dict[str, Any]:
+    """Send an interactive list message.
+    sections: [{"title": "Section", "rows": [{"id": "row_1", "title": "Option 1", "description": "..."}]}]"""
+
+    phone = _normalize_phone(to)
+    headers = _meta_headers()
+
+    payload: dict[str, Any] = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "interactive",
+        "interactive": {
+            "type": "list",
+            "body": {"text": body},
+            "action": {
+                "button": button_text,
+                "sections": sections,
+            },
+        },
+    }
+
+    if header:
+        payload["interactive"]["header"] = {"type": "text", "text": header}
+    if footer:
+        payload["interactive"]["footer"] = {"text": footer}
+
+    try:
+        resp = await _http_client.post(META_API_BASE, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPError as exc:
+        logger.error("Failed to send interactive list: %s", exc)
+        raise exceptions.BadRequestException("Failed to send interactive message.", error_detail=str(exc))
+
+    message_id = data.get("messages", [{}])[0].get("id")
+    return {"message_id": message_id, "status": "sent", "to": phone}
+
+
 def _detect_media_type(url: str) -> str:
     """Guess media type from URL extension. Defaults to 'image'."""
     lower = url.lower()

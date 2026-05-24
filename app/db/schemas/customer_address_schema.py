@@ -2,11 +2,12 @@ from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from uuid import UUID
 from datetime import datetime
+from ...core import utils
 
 
 class CustomerAddressSchema(BaseModel):
     customer_id: UUID
-    label: Optional[str] = None
+    label: str = utils.AddressLabel.HOME.value
     full_name: Optional[str] = None
     phone_number: Optional[str] = None
     address_line: str

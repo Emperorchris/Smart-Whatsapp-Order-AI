@@ -26,7 +26,15 @@ class Order(Base):
 
     payment_status = Column(String, default=utils.PaymentStatus.PENDING.value)
 
-    delivery_address = Column(Text)
+    address_label = Column(String, nullable=True)  # home/office/shop/other
+    address_full_name = Column(String, nullable=True)  # recipient name if different from customer
+    address_phone_number = Column(String, nullable=True)  # delivery contact number
+    address_line = Column(String, nullable=True)  # street address
+    address_city = Column(String, nullable=True)
+    address_state = Column(String, nullable=True)
+    address_country = Column(String, nullable=True, default="Nigeria")
+    address_postal_code = Column(String, nullable=True)
+    address_landmark = Column(String, nullable=True)  # nearby landmark for delivery riders
     
     extra_metadata = Column(JSON, nullable=True)  # For any additional order info
     

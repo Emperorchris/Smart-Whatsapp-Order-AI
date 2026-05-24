@@ -9,6 +9,7 @@ from ..tools.product_tools import product_tools
 from ..tools.cart_tools import cart_tools
 from ..tools.order_tools import order_tools
 from ..tools.handoff_tools import handoff_tools
+from ..tools.address_tools import address_tools
 from ..prompts.system_prompt import SYSTEM_PROMPT
 from ...core.config import Config
 
@@ -23,7 +24,7 @@ from ...core.config import Config
 # )
 # from ...core.utils import GraphNodeName
 
-all_tools = product_tools + cart_tools + order_tools + handoff_tools
+all_tools = product_tools + cart_tools + order_tools + handoff_tools + address_tools
 
 llm = ChatOpenAI(model=Config.OPENAI_LLM_MODEL, temperature=0)
 llm_with_tools = llm.bind_tools(all_tools)
@@ -67,6 +68,7 @@ async def run_agent(state: AgentState, db: AsyncSession, customer_id: str = None
             "db": db,
             "customer_id": customer_id or state.get("customer_id"),
             "conversation_id": conversation_id or state.get("conversation_id"),
+            "customer_whatsapp_number": state.get("customer_whatsapp_number"),
         }
     }
     return await graph.ainvoke(state, config=config)

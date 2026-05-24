@@ -13,8 +13,16 @@ class OrderSchema(BaseModel):
     status: str = utils.OrderStatus.PENDING.value
     total_amount: Decimal
     payment_status: str = utils.PaymentStatus.PENDING.value
-    delivery_address: str
-    extra_metadata: Optional[dict] = None  # For any additional order info
+    address_label: Optional[str] = None
+    address_full_name: Optional[str] = None
+    address_phone_number: Optional[str] = None
+    address_line: Optional[str] = None
+    address_city: Optional[str] = None
+    address_state: Optional[str] = None
+    address_country: Optional[str] = "Nigeria"
+    address_postal_code: Optional[str] = None
+    address_landmark: Optional[str] = None
+    extra_metadata: Optional[dict] = None
 
 
 class OrderResponse(OrderSchema):

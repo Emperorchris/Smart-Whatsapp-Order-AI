@@ -15,6 +15,7 @@ from .endpoints.processed_webhook_endpoints import webhook_router
 from .endpoints.handoff_endpoints import handoff_router
 from .endpoints.whatsapp_webhook_endpoints import whatsapp_webhook_router
 from .endpoints.bank_account_endpoints import bank_account_router
+from .endpoints.customer_address_endpoints import customer_address_router
 
 api_router = APIRouter()
 
@@ -34,3 +35,4 @@ api_router.include_router(webhook_router)
 api_router.include_router(bank_account_router)
 api_router.include_router(whatsapp_webhook_router)
 api_router.include_router(handoff_router)
+api_router.include_router(customer_address_router)

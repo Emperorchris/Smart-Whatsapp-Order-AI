@@ -159,3 +159,10 @@ class DeliveryStatus(enum.Enum):
     SHIPPED = "shipped"
     DELIVERED = "delivered"
     RETURNED = "returned"
+
+
+class AddressLabel(enum.Enum):
+    HOME = "home"
+    OFFICE = "office"
+    SHOP = "shop"
+    OTHER = "other"
