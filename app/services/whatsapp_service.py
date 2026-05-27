@@ -38,13 +38,18 @@ def _meta_headers() -> dict[str, str]:
 
 
 def _normalize_phone(number: str) -> str:
-    """Strip any 'whatsapp:' prefix and leading/trailing whitespace so we get a
-    pure E.164 number (e.g. '2348012345678')."""
+    """Normalize to E.164 digits for Meta API.
+    Handles: +234..., 234..., 0803..., 803..."""
     value = number.strip()
     if value.lower().startswith("whatsapp:"):
         value = value.split(":", 1)[1].strip()
-    # Remove any leading '+' — Meta expects digits only
-    return value.lstrip("+")
+    value = value.lstrip("+")
+    # Convert local Nigerian format to international
+    if value.startswith("0") and len(value) >= 10:
+        value = "234" + value[1:]
+    elif not value.startswith("234") and len(value) >= 9:
+        value = "234" + value
+    return value
 
 
 async def send_message(to: str, body: str, media_urls: list[str] | None = None) -> dict[str, Any]:
@@ -280,6 +285,28 @@ def _detect_media_type(url: str) -> str:
     return "image"
 
 
+async def identify_staff_by_phone(db: AsyncSession, phone: str):
+    """Find a staff member by phone number using all format variants."""
+    phone_value = phone.strip().lstrip("+")
+    phone_variants = {phone_value, "+" + phone_value}
+    if phone_value.startswith("234") and len(phone_value) > 10:
+        local = phone_value[3:]
+        phone_variants.update({local, "0" + local, "+234" + local})
+    elif phone_value.startswith("0") and len(phone_value) >= 10:
+        without_zero = phone_value[1:]
+        phone_variants.update({without_zero, "234" + without_zero, "+234" + without_zero})
+    elif len(phone_value) >= 9:
+        phone_variants.update({"0" + phone_value, "234" + phone_value, "+234" + phone_value})
+
+    result = await db.execute(
+        select(staff_model.Staff).filter(
+            staff_model.Staff.is_active.is_(True),
+            staff_model.Staff.whatsapp_number.in_(phone_variants),
+        )
+    )
+    return result.scalars().first()
+
+
 async def identify_sender(phone: str, db: AsyncSession) -> str:
     if not phone or not phone.strip():
         raise exceptions.BadRequestException("Sender phone number is required.")
@@ -287,25 +314,45 @@ async def identify_sender(phone: str, db: AsyncSession) -> str:
     phone_value = phone.strip()
     if phone_value.lower().startswith("whatsapp:"):
         phone_value = phone_value.split(":", 1)[1]
+    phone_value = phone_value.lstrip("+")
+
+    # Build all possible phone formats to match against DB
+    # Handles: 2347039487884, +2347039487884, 07039487884, 7039487884
+    phone_variants = {phone_value, "+" + phone_value}
+
+    if phone_value.startswith("234") and len(phone_value) > 10:
+        local = phone_value[3:]
+        phone_variants.add(local)
+        phone_variants.add("0" + local) 
+        phone_variants.add("+234" + local)
+    elif phone_value.startswith("0") and len(phone_value) >= 10:
+        without_zero = phone_value[1:]
+        phone_variants.add(without_zero)
+        phone_variants.add("234" + without_zero) 
+        phone_variants.add("+234" + without_zero) 
+    elif len(phone_value) >= 9:
+        phone_variants.add("0" + phone_value)
+        phone_variants.add("234" + phone_value)
+        phone_variants.add("+234" + phone_value)
 
     result = await db.execute(
         select(staff_model.Staff).filter(
             staff_model.Staff.is_active.is_(True),
             staff_model.Staff.whatsapp_number.is_not(None),
-            staff_model.Staff.whatsapp_number == phone_value,
+            staff_model.Staff.whatsapp_number.in_(phone_variants),
         )
     )
-    staff = result.scalars().all()
+    staff = result.scalars().first()
 
     if staff:
         return utils.MessageSenderType.STAFF.value
 
     result = await db.execute(
         select(customer_model.Customer).filter(
-            customer_model.Customer.whatsapp_number == phone_value
+            customer_model.Customer.whatsapp_number.in_(phone_variants)
         )
     )
-    customer = result.scalars().all()
+    customer = result.scalars().first()
     if customer:
         return utils.MessageSenderType.CUSTOMER.value
 

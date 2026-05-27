@@ -1,5 +1,6 @@
 import asyncio
-import logging
+# import logging
+from loguru import logger
 from fastapi import APIRouter, Request, Response
 from ...core.dependencies import DBSession
 from ...core.config import Config
@@ -13,7 +14,7 @@ from ...services import (
 )
 
 
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
 
 # Per-conversation locks to prevent concurrent processing of messages
 # from the same customer (avoids response mixing/race conditions)
@@ -71,15 +72,23 @@ async def whatsapp_webhook(db: DBSession, request: Request):
     except exceptions.NotFoundException:
         sender_type = utils.MessageSenderType.CUSTOMER.value
 
-    # 3. Handle staff messages
+    logger.info("webhook: sender={} identified as {}", payload.sender_number, sender_type)
+
+    # 3. Handle staff messages — commands and active handoffs handled directly,
+    #    otherwise fall through to AI like a normal customer
     if sender_type == utils.MessageSenderType.STAFF.value:
-        await whatsapp_staff_webhook_service.handle_staff_incoming_message(
+        result = await whatsapp_staff_webhook_service.handle_staff_incoming_message(
             db,
             payload.sender_number,
             payload.body,
             payload.message_sid,
+            interactive_id=payload.interactive_id,
         )
-        return Response(content="OK", status_code=200)
+        if result is None:
+            # No active handoff — let staff chat with AI, fall through to customer flow
+            logger.info("webhook: staff has no active handoff, routing to AI")
+        else:
+            return Response(content="OK", status_code=200)
 
     # 4. Get or create customer
     customer = await whatsapp_webhook_processing_service.get_or_create_customer(db, payload)
@@ -91,22 +100,32 @@ async def whatsapp_webhook(db: DBSession, request: Request):
         )
     )
 
-    # 6. Acquire per-conversation lock to prevent concurrent processing
-    conv_key = str(active_conversation.id)
-    if conv_key not in _conversation_locks:
-        _conversation_locks[conv_key] = asyncio.Lock()
-
-    lock = _conversation_locks[conv_key]
-    async with lock:
-        await customer_message_handler_service.process_customer_message(
-            db, payload, customer, active_conversation
-        )
-
-    # Clean up idle locks so the dict doesn't grow forever
-    if not lock.locked():
-        _conversation_locks.pop(conv_key, None)
+    # 6. Process in background — return 200 IMMEDIATELY so Meta doesn't retry
+    asyncio.create_task(
+        _process_message_background(payload, customer, active_conversation, sender_type)
+    )
 
     return Response(content="OK", status_code=200)
+
+
+async def _process_message_background(payload, customer, active_conversation, sender_type=utils.MessageSenderType.CUSTOMER.value):
+    """Process the customer message in the background with its own DB session."""
+    async with AsyncSessionLocal() as db:
+        conv_key = str(active_conversation.id)
+        if conv_key not in _conversation_locks:
+            _conversation_locks[conv_key] = asyncio.Lock()
+
+        lock = _conversation_locks[conv_key]
+        try:
+            async with lock:
+                await customer_message_handler_service.process_customer_message(
+                    db, payload, customer, active_conversation, sender_type
+                )
+        except Exception as exc:
+            logger.error("Background message processing failed: {}", exc)
+        finally:
+            if not lock.locked():
+                _conversation_locks.pop(conv_key, None)
 
 
 

@@ -100,6 +100,7 @@ class CartActionType(enum.Enum):
 class HandOffStatus(enum.Enum):
     NONE = "none"
     PENDING = "pending"
+    CANCELLED = "cancelled"
     REQUESTED = "requested"
     ACTIVE = "active"
     RESOLVED = "resolved"

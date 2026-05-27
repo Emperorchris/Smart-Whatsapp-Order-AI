@@ -101,6 +101,23 @@ def _sanitize_message_sequence(messages: list[AnyMessage]) -> list[AnyMessage]:
     return sanitized
 
 
+def _extract_text_content(content) -> str:
+    """Extract plain text from message content.
+    Claude returns content as a list of blocks (text, tool_use, etc.).
+    OpenAI returns content as a plain string."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                text_parts.append(block)
+        return " ".join(text_parts)
+    return str(content) if content else ""
+
+
 async def save_agent_messages(
     db: AsyncSession,
     conversation_id: str,
@@ -126,7 +143,8 @@ async def save_agent_messages(
                     sender_type=MessageSenderType.AI.value,
                     direction=MessageDirection.OUTBOUND.value,
                     message_type=MessageType.TOOL_CALL.value,
-                    content=msg.content or "",
+                    # content=msg.content or "",  # OpenAI returns str
+                    content=_extract_text_content(msg.content),  # Claude returns list of blocks
                     tool_metadata=serializable_calls,
                     status=MessageStatus.SENT.value,
                 )
@@ -138,7 +156,8 @@ async def save_agent_messages(
                     sender_type=MessageSenderType.AI.value,
                     direction=MessageDirection.OUTBOUND.value,
                     message_type=MessageType.TEXT.value,
-                    content=msg.content or "",
+                    # content=msg.content or "",  # OpenAI returns str
+                    content=_extract_text_content(msg.content),  # Claude returns list of blocks
                     status=MessageStatus.SENT.value,
                 )
                 db.add(db_msg)
@@ -149,7 +168,7 @@ async def save_agent_messages(
                 sender_type=MessageSenderType.TOOL.value,
                 direction=MessageDirection.OUTBOUND.value,
                 message_type=MessageType.TOOL_RESULT.value,
-                content=msg.content or "",
+                content=_extract_text_content(msg.content),  # safe for both OpenAI and Claude
                 tool_metadata={
                     "tool_call_id": getattr(msg, "tool_call_id", ""),
                     "tool_name": getattr(msg, "name", ""),

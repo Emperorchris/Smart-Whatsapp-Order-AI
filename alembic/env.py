@@ -20,8 +20,13 @@ for _, module_name, _ in pkgutil.iter_modules(model_pkg.__path__):
 # access to the values within the .ini file in use.
 config = context.config
 
-# Set the database URL from your Config
-config.set_main_option("sqlalchemy.url", Config.CONNECTION_STRING)
+# Set the database URL from your Config — swap async driver for sync
+def _sync_url(url: str) -> str:
+    if "asyncpg" in url:
+        return url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+    return url
+
+config.set_main_option("sqlalchemy.url", _sync_url(Config.CONNECTION_STRING))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

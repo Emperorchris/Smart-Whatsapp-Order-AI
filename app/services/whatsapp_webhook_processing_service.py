@@ -28,6 +28,7 @@ class IncomingWhatsAppPayload:
     profile_name: str | None
     wa_id: str | None
     reply_to_message_id: str | None = None
+    interactive_id: str | None = None  # button/list reply ID (e.g. "handoff_resolve_yes")
 
 
 def parse_incoming_payload(data: dict[str, Any]) -> IncomingWhatsAppPayload | None:
@@ -61,6 +62,7 @@ def parse_incoming_payload(data: dict[str, Any]) -> IncomingWhatsAppPayload | No
         body = ""
         media_urls = []
         num_media = 0
+        interactive_id = None
 
         if msg_type == "text":
             body = msg.get("text", {}).get("body", "")
@@ -89,8 +91,10 @@ def parse_incoming_payload(data: dict[str, Any]) -> IncomingWhatsAppPayload | No
             interactive_type = interactive.get("type", "")
             if interactive_type == "button_reply":
                 body = interactive.get("button_reply", {}).get("title", "")
+                interactive_id = interactive.get("button_reply", {}).get("id", "")
             elif interactive_type == "list_reply":
                 body = interactive.get("list_reply", {}).get("title", "")
+                interactive_id = interactive.get("list_reply", {}).get("id", "")
 
         resolved_type = _resolve_meta_message_type(msg_type)
 
@@ -104,6 +108,7 @@ def parse_incoming_payload(data: dict[str, Any]) -> IncomingWhatsAppPayload | No
             profile_name=profile_name,
             wa_id=wa_id,
             reply_to_message_id=reply_to_message_id,
+            interactive_id=interactive_id,
         )
 
     except (KeyError, IndexError):

@@ -113,7 +113,7 @@ async def activate_handoff_for_staff(db: AsyncSession, conversation_id: str, sta
     return conversation_schema.ConversationResponse.model_validate(conversation)
 
 
-async def resume_ai(db: AsyncSession, conversation_id: str) -> conversation_schema.ConversationResponse:
+async def resume_ai(db: AsyncSession, conversation_id: str, handoff_status: utils.HandOffStatus | None = None) -> conversation_schema.ConversationResponse:
     result = await db.execute(
         select(conversation_model.Conversation).filter(
             conversation_model.Conversation.id == conversation_id
@@ -127,7 +127,7 @@ async def resume_ai(db: AsyncSession, conversation_id: str) -> conversation_sche
     conversation.handoff_to_human = False
     conversation.ai_enabled = True
     conversation.assigned_staff_id = None
-    conversation.handoff_status = utils.HandOffStatus.RESOLVED.value
+    conversation.handoff_status = handoff_status.value if handoff_status else utils.HandOffStatus.RESOLVED.value
     conversation.handoff_ended_at = datetime.now(tz=timezone.utc).replace(tzinfo=None)
     conversation.handoff_reason = None
 

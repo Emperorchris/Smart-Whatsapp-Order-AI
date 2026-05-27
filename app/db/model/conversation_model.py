@@ -29,4 +29,4 @@ class Conversation(Base):
     handoff_started_at = Column(DateTime, nullable=True)
     handoff_ended_at = Column(DateTime, nullable=True)
     human_hand_offs = relationship(
-        "HumanHandOff", back_populates="conversation", foreign_keys="HumanHandOff.conversation_id")
+        "HumanHandOff", back_populates="conversation", foreign_keys="HumanHandOff.conversation_id", lazy="selectin")

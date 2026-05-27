@@ -14,7 +14,7 @@ async def save_delivery_address(
     state: str,
     label: str = utils.AddressLabel.HOME.value,
     landmark: Optional[str] = None,
-    is_default: bool = False,
+    is_default: bool = True,
 ) -> str:
     """Save a delivery address for the customer.
     Use this when a customer provides their delivery address.

@@ -53,6 +53,11 @@ async def assign_handoff(handoff_id: str, staff_id: str, db: DBSession, current_
     return await human_handoff_service.assign_handoff_to_staff(db, handoff_id, staff_id)
 
 
+@handoff_router.patch("/{handoff_id}/cancel", response_model=HumanHandOffResponse)
+async def cancel_handoff(handoff_id: str, db: DBSession, current_staff: CurrentStaff):
+    return await human_handoff_service.cancel_handoff(db, handoff_id)
+
+
 @handoff_router.patch("/{handoff_id}/status", response_model=HumanHandOffResponse)
 async def update_handoff_status(
     handoff_id: str,

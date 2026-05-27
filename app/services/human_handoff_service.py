@@ -9,6 +9,24 @@ from . import staff_service
 
 
 async def create_handoff(db: AsyncSession, data: human_hand_off_schema.HumanHandOffSchema) -> human_hand_off_schema.HumanHandOffResponse:
+    # Check if there's an existing unresolved handoff for this conversation
+    result = await db.execute(
+        select(human_hand_off_model.HumanHandOff).filter(
+            human_hand_off_model.HumanHandOff.conversation_id == data.conversation_id,
+            human_hand_off_model.HumanHandOff.status.in_([
+                utils.HandOffStatus.PENDING.value,
+                utils.HandOffStatus.ACTIVE.value,
+                utils.HandOffStatus.REQUESTED.value,
+            ])
+        )
+    )
+    existing_handoff = result.scalars().first()
+    
+    if existing_handoff:
+        raise exceptions.BadRequestException(
+            f"Cannot initiate a new handoff. You already have a handoff with status '{existing_handoff.status}' for this conversation. Please resolve or cancel the existing handoff before creating a new one."
+        )
+    
     new_handoff = human_hand_off_model.HumanHandOff(
         conversation_id=data.conversation_id,
         triggered_by=data.triggered_by,
@@ -23,6 +41,50 @@ async def create_handoff(db: AsyncSession, data: human_hand_off_schema.HumanHand
     await db.refresh(new_handoff)
 
     return human_hand_off_schema.HumanHandOffResponse.model_validate(new_handoff)
+
+
+async def cancel_handoff(db: AsyncSession, handoff_id: str) -> human_hand_off_schema.HumanHandOffResponse:
+    result = await db.execute(
+        select(human_hand_off_model.HumanHandOff).filter(
+            human_hand_off_model.HumanHandOff.id == handoff_id
+        )
+    )
+    handoff = result.scalars().first()
+
+    if not handoff:
+        raise exceptions.NotFoundException("Human hand-off record not found.")
+
+    if handoff.status == utils.HandOffStatus.RESOLVED.value:
+        raise exceptions.BadRequestException("Cannot cancel a resolved hand-off.")
+
+    if handoff.status == utils.HandOffStatus.CANCELLED.value:
+        raise exceptions.BadRequestException("This hand-off is already cancelled.")
+
+    handoff.status = utils.HandOffStatus.CANCELLED.value
+    await db.commit()
+    await db.refresh(handoff)
+    return human_hand_off_schema.HumanHandOffResponse.model_validate(handoff)
+
+
+async def check_handoff_status(db: AsyncSession, conversation_id: str) -> str:
+    result = await db.execute(
+        select(human_hand_off_model.HumanHandOff).filter(
+            human_hand_off_model.HumanHandOff.conversation_id == conversation_id,
+            human_hand_off_model.HumanHandOff.status.in_([
+                utils.HandOffStatus.PENDING.value,
+                utils.HandOffStatus.ACTIVE.value,
+                utils.HandOffStatus.REQUESTED.value,
+            ])
+        ).order_by(human_hand_off_model.HumanHandOff.requested_at.desc())
+    )
+    handoff = result.scalars().first()
+
+    if not handoff:
+        return "No active hand-off requests for this conversation."
+
+    return f"Current hand-off status: {handoff.status}. Triggered by: {handoff.triggered_by}. Reason: {handoff.reason or 'N/A'}."
+
+
 
 
 async def get_all_handoffs(db: AsyncSession) -> list[human_hand_off_schema.HumanHandOffResponse]:
@@ -190,7 +252,7 @@ async def claim_next_pending_handoff(db: AsyncSession, staff_id: str) -> human_h
     )
     if existing_result.scalars().first():
         raise exceptions.ConflictException(
-            f"You already have an active hand-off. Use {utils.StaffConversationCommand.DONE} to mark it as done before claiming the next one."
+            f"You already have an active hand-off. Use {utils.StaffConversationCommand.DONE.value} to mark it as done or or {utils.StaffConversationCommand.SKIP.value} to skip before claiming the next one."
         )
 
     pending_result = await db.execute(

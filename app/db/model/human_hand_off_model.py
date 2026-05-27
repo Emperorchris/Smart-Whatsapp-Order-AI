@@ -18,8 +18,8 @@ class HumanHandOff(Base):
     assigned_staff_id = Column(
         ForeignKey("staff.id", ondelete="SET NULL"), nullable=True
     )
-    staff = relationship("Staff", back_populates="human_hand_offs", foreign_keys=[assigned_staff_id])
-    conversation = relationship("Conversation", back_populates="human_hand_offs", foreign_keys=[conversation_id])
+    staff = relationship("Staff", back_populates="human_hand_offs", foreign_keys=[assigned_staff_id], lazy="selectin")
+    conversation = relationship("Conversation", back_populates="human_hand_offs", foreign_keys=[conversation_id], lazy="selectin")
     status = Column(String, nullable=False, default=utils.HandOffStatus.PENDING.value)
     claimed_at = Column(DateTime, nullable=True)
     requested_at = Column(

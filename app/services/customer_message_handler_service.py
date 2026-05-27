@@ -1,6 +1,7 @@
 import asyncio
 import re
-import logging
+# import logging
+from loguru import logger
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from langchain_core.messages import HumanMessage
@@ -8,13 +9,13 @@ from langchain_core.messages import HumanMessage
 from ..core import utils
 from ..db.schemas.message_schema import MessageSchema
 from ..ai.graph import agent_graph
-from ..ai.memory.conversation_memory import load_conversation_history, save_agent_messages
+from ..ai.memory.conversation_memory import load_conversation_history, save_agent_messages, _extract_text_content
 from .whatsapp_webhook_processing_service import IncomingWhatsAppPayload
 from ..db.schemas.customers_schema import CustomerResponse
 from ..db.schemas.conversation_schema import ConversationResponse
-from . import message_service, whatsapp_service, whatsapp_webhook_processing_service
+from . import message_service, whatsapp_service, whatsapp_webhook_processing_service, conversation_service
 
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
 
 
 async def process_customer_message(
@@ -22,6 +23,7 @@ async def process_customer_message(
     payload: IncomingWhatsAppPayload,
     customer: CustomerResponse,
     active_conversation: ConversationResponse,
+    sender_type: str = utils.MessageSenderType.CUSTOMER.value,
 ):
     """Process a single customer message: resolve context, run the AI agent, and send the reply."""
 
@@ -43,8 +45,23 @@ async def process_customer_message(
         payload,
     )
 
-    # If handoff is active, AI is disabled
-    if active_conversation.handoff_to_human:
+    # Re-check handoff status from DB (the object may be stale in background tasks)
+    fresh_conversation = await conversation_service.get_conversation_by_id(db, str(active_conversation.id))
+    if fresh_conversation.handoff_to_human and fresh_conversation.handoff_status == utils.HandOffStatus.ACTIVE.value:
+        # Forward customer message to the assigned staff member
+        if fresh_conversation.assigned_staff_id:
+            try:
+                from . import staff_service
+                staff = await staff_service.get_staff_by_id(db, str(fresh_conversation.assigned_staff_id))
+                if staff and staff.whatsapp_number:
+                    customer_name = payload.profile_name or "Customer"
+                    # _normalize_phone inside send_message handles local→international format
+                    await whatsapp_service.send_message(
+                        to=staff.whatsapp_number,
+                        body=f"*{customer_name}:*\n{payload.body}",
+                    )
+            except Exception as exc:
+                logger.error("Failed to forward customer message to staff: {}", exc)
         return
 
     # Run the LangGraph agent
@@ -57,6 +74,7 @@ async def process_customer_message(
         "customer_wa_id": payload.wa_id,
         "customer_id": str(customer.id),
         "conversation_id": str(active_conversation.id),
+        "sender_type": sender_type,
     }
 
     history_count = len(initial_state["messages"])
@@ -68,11 +86,14 @@ async def process_customer_message(
         conversation_id=str(active_conversation.id),
     )
 
-    ai_reply = (
-        result["messages"][-1].content
-        if result["messages"]
-        else "Sorry, I couldn't process your request right now."
-    )
+    # OpenAI returns content as str, Claude returns list of blocks
+    # ai_reply = (
+    #     result["messages"][-1].content
+    #     if result["messages"]
+    #     else "Sorry, I couldn't process your request right now."
+    # )
+    raw_content = result["messages"][-1].content if result["messages"] else None
+    ai_reply = _extract_text_content(raw_content) if raw_content else "Sorry, I couldn't process your request right now."
 
     # Only scan NEW messages from this agent run (not loaded history)
     new_messages = result["messages"][history_count:]

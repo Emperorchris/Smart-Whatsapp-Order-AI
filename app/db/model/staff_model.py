@@ -24,7 +24,7 @@ class Staff(Base):
     # Hashed refresh token; null when logged out
     refresh_token_hash = Column(String, nullable=True)
     human_hand_offs = relationship(
-        "HumanHandOff", back_populates="staff", foreign_keys="HumanHandOff.assigned_staff_id")
+        "HumanHandOff", back_populates="staff", foreign_keys="HumanHandOff.assigned_staff_id", lazy="selectin")
     created_at = Column(DateTime, nullable=False,
                         default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))

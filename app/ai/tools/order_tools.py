@@ -1,8 +1,18 @@
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from ...services import order_service, product_service, cart_service, customer_service, order_item_service, customer_address_service, whatsapp_service
+from ...services import (
+    order_service,
+    product_service,
+    cart_service,
+    customer_service,
+    order_item_service,
+    customer_address_service,
+    whatsapp_service,
+    bank_account_service,
+)
 from ...services.product_variant_service import get_variant_by_id
 from ...db.schemas import order_schema, order_item_schema, customer_address_schema
 from ...db.model import product_variant_model
@@ -28,7 +38,7 @@ async def place_order(
 
     db: AsyncSession = config["configurable"]["db"]
     customer_id = config["configurable"]["customer_id"]
-    
+
     try:
         customer = await customer_service.get_customer_by_id(db, customer_id)
     except Exception:
@@ -48,22 +58,30 @@ async def place_order(
 
     if use_default_address:
         try:
-            address = await customer_address_service.get_default_address(db, customer_id)
+            address = await customer_address_service.get_default_address(
+                db, customer_id
+            )
         except Exception:
             return "You don't have a default address saved. Please provide a delivery address or save one first."
     elif customer_address_id:
         try:
-            address = await customer_address_service.get_address_by_id(db, customer_address_id)
+            address = await customer_address_service.get_address_by_id(
+                db, customer_address_id
+            )
         except Exception:
             return "That address was not found. Please provide a valid address or use your default."
     else:
         # No address provided — prompt the customer to add or select one
-        addresses = await customer_address_service.get_addresses_by_customer_id(db, customer_id)
+        addresses = await customer_address_service.get_addresses_by_customer_id(
+            db, customer_id
+        )
         if addresses:
             lines = []
             for i, addr in enumerate(addresses, 1):
                 default_tag = " *(default)*" if addr.is_default else ""
-                lines.append(f"{i}. *{addr.label.capitalize()}*{default_tag} — {addr.address_line}, {addr.city}")
+                lines.append(
+                    f"{i}. *{addr.label.capitalize()}*{default_tag} — {addr.address_line}, {addr.city}"
+                )
             return (
                 "You need a delivery address to place your order. You have these saved addresses:\n\n"
                 + "\n".join(lines)
@@ -71,31 +89,38 @@ async def place_order(
             )
         # Send interactive list to collect address
         customer_phone = config["configurable"].get("customer_whatsapp_number", "")
+        logger.info("place_order: customer_phone from config = {!r}", customer_phone)
         if customer_phone:
             labels = [member for member in utils.AddressLabel]
             sections = [
                 {
                     "title": "Address Type",
                     "rows": [
-                        {"id": f"addr_label_{label.value}", "title": label.value.capitalize()}
+                        {
+                            "id": f"addr_label_{label.value}",
+                            "title": label.value.capitalize(),
+                        }
                         for label in labels
                     ],
                 }
             ]
-            await whatsapp_service.send_interactive_list(
-                to=customer_phone,
-                body="You need a delivery address to place your order. What type of address is this?",
-                button_text="Select type",
-                sections=sections,
-                header="Delivery Address",
-                footer="Step 1 of 2",
-            )
+            try:
+                result = await whatsapp_service.send_interactive_list(
+                    to=customer_phone,
+                    body="You need a delivery address to place your order. What type of address is this?",
+                    button_text="Select type",
+                    sections=sections,
+                    header="Delivery Address",
+                    footer="Step 1 of 2",
+                )
+                logger.info("place_order: interactive list sent successfully — {}", result)
+            except Exception as exc:
+                logger.error("place_order: FAILED to send interactive list — {}", exc)
             return (
                 "I've sent the customer an interactive list to pick their address type. "
                 "Wait for their selection, then ask for the full address details: street address, city, state, and a landmark."
             )
-        
-            
+
         return "Please provide a delivery address before I can place your order. Send me your street address, city, state, and a landmark if any."
 
     # Check stock
@@ -106,11 +131,15 @@ async def place_order(
                 variant = await get_variant_by_id(db, str(item.variant_id))
                 if variant.inventory_quantity < item.quantity:
                     try:
-                        product = await product_service.get_product_by_id(db, str(item.product_id))
+                        product = await product_service.get_product_by_id(
+                            db, str(item.product_id)
+                        )
                         name = product.name
                     except Exception:
                         name = "a product"
-                    attrs = ", ".join(f"{k}: {val}" for k, val in variant.attributes.items())
+                    attrs = ", ".join(
+                        f"{k}: {val}" for k, val in variant.attributes.items()
+                    )
                     if variant.inventory_quantity == 0:
                         stock_issues.append(f"*{name}* ({attrs}) is out of stock")
                     else:
@@ -128,7 +157,7 @@ async def place_order(
         )
 
     try:
-        order_number = "#ORD - " + common.generate_order_number()
+        order_number = "#ORD-" + common.generate_order_number()
         total_amount = sum(item.subtotal for item in cart_items)
 
         order_data = order_schema.OrderSchema(
@@ -152,7 +181,9 @@ async def place_order(
 
         for item in cart_items:
             try:
-                product = await product_service.get_product_by_id(db, str(item.product_id))
+                product = await product_service.get_product_by_id(
+                    db, str(item.product_id)
+                )
             except Exception:
                 continue
 
@@ -172,7 +203,9 @@ async def place_order(
                 product_sku=product.sku,
                 product_description=product.description,
                 product_category=None,
-                product_media=[m.model_dump() for m in product.media] if product.media else None,
+                product_media=[m.model_dump() for m in product.media]
+                if product.media
+                else None,
                 product_variant_attributes=variant_attrs,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
@@ -199,18 +232,88 @@ async def place_order(
         if address.landmark:
             delivery_display += f" (Landmark: {address.landmark})"
 
+        # Include payment details in the order confirmation
+        payment_info = ""
+        try:
+            accounts = await bank_account_service.get_all_bank_accounts(db)
+            if accounts:
+                default_account = next((a for a in accounts if a.is_default), accounts[0])
+                payment_info = (
+                    f"\n\nTo complete payment, transfer *NGN {total_amount:,.2f}* to:\n\n"
+                    f"• Bank: *{default_account.bank_name}*\n"
+                    f"• Account: *{default_account.account_number}*\n"
+                    f"• Name: *{default_account.account_name}*\n\n"
+                    f"After payment, send your proof of payment (screenshot or receipt) so we can confirm it."
+                )
+        except Exception:
+            pass
+
         return (
             f"Order placed successfully!\n\n"
             f"• Order Number: *{order_number}*\n"
+            f"• Status: *{order.status}*\n"
             f"• Total: *NGN {total_amount:,.2f}*\n"
-            f"• Delivery: {delivery_display}\n\n"
-            f"Review your delivery address. If it's incorrect, reply with  *Change Address* to update it before the order is processed. \n"
-            f"You can check your order status anytime."
+            f"• Delivery Address: {delivery_display}\n\n"
+            f"Review your delivery address. If it's incorrect, reply with *Change Address* to update it before the order is processed."
+            f"{payment_info}"
         )
     except Exception as e:
         await db.rollback()
         return f"Sorry, there was an error placing your order: {str(e)}"
 
+
+@tool
+async def make_payment(config: RunnableConfig, order_number: str) -> str:
+    """Show the business bank account details for the customer to make a bank transfer payment.
+    Use this when a customer wants to pay for an order or asks how to pay.
+    Shows the default bank account, or lists all accounts if no default is set."""
+
+    db: AsyncSession = config["configurable"]["db"]
+    customer_id = config["configurable"]["customer_id"]
+
+    # Verify the order exists and belongs to the customer
+    try:
+        order = await order_service.get_order_by_order_number(db, order_number)
+    except Exception:
+        return f"No order found with number {order_number}."
+
+    if str(order.customer_id) != customer_id:
+        return f"No order found with number {order_number} in your account."
+
+    if order.payment_status == utils.PaymentStatus.COMPLETED.value:
+        return f"Order {order_number} has already been paid."
+
+    # Get bank accounts
+    accounts = await bank_account_service.get_all_bank_accounts(db)
+    if not accounts:
+        return "Sorry, no bank account details are available at the moment. Please contact support or should I transfer you to human support?"
+
+    # Try to find the default account
+    default_account = next((a for a in accounts if a.is_default), None)
+
+    if default_account:
+        return (
+            f"To complete your order *{order_number}*, please transfer *NGN {order.total_amount:,.2f}* to:\n\n"
+            f"• Bank: *{default_account.bank_name}*\n"
+            f"• Account Number: *{default_account.account_number}*\n"
+            f"• Account Name: *{default_account.account_name}*\n\n"
+            f"After payment, send your proof of payment (screenshot or receipt) so we can confirm it."
+        )
+
+    # No default — list all accounts
+    lines = []
+    for acc in accounts:
+        lines.append(
+            f"• *{acc.bank_name}*\n"
+            f"  Account: *{acc.account_number}*\n"
+            f"  Name: *{acc.account_name}*"
+        )
+
+    return (
+        f"To complete your order *{order_number}*, please transfer *NGN {order.total_amount:,.2f}* to any of these accounts:\n\n"
+        + "\n\n".join(lines)
+        + "\n\nAfter payment, send your proof of payment (screenshot or receipt) so we can confirm it."
+    )
 
 
 @tool
@@ -235,7 +338,10 @@ async def update_order_address(
     if str(order.customer_id) != customer_id:
         return f"No order found with number {order_number} in your account."
 
-    if order.status not in [utils.OrderStatus.PENDING.value, utils.OrderStatus.PAID.value]:
+    if order.status not in [
+        utils.OrderStatus.PENDING.value,
+        utils.OrderStatus.PAID.value,
+    ]:
         return f"Address can only be changed for pending or paid orders. Order {order_number} is currently *{order.status}*."
 
     # Resolve new address
@@ -243,22 +349,32 @@ async def update_order_address(
 
     if use_default_address:
         try:
-            address = await customer_address_service.get_default_address(db, customer_id)
+            address = await customer_address_service.get_default_address(
+                db, customer_id
+            )
         except Exception:
-            return "You don't have a default address saved. Please save an address first."
+            return (
+                "You don't have a default address saved. Please save an address first."
+            )
     elif new_address_id:
         try:
-            address = await customer_address_service.get_address_by_id(db, new_address_id)
+            address = await customer_address_service.get_address_by_id(
+                db, new_address_id
+            )
         except Exception:
             return "That address was not found."
     else:
         # List saved addresses for the customer to pick
-        addresses = await customer_address_service.get_addresses_by_customer_id(db, customer_id)
+        addresses = await customer_address_service.get_addresses_by_customer_id(
+            db, customer_id
+        )
         if addresses:
             lines = []
             for i, addr in enumerate(addresses, 1):
                 default_tag = " *(default)*" if addr.is_default else ""
-                lines.append(f"{i}. *{addr.label.capitalize()}*{default_tag} — {addr.address_line}, {addr.city}")
+                lines.append(
+                    f"{i}. *{addr.label.capitalize()}*{default_tag} — {addr.address_line}, {addr.city}"
+                )
             return (
                 "Which address should I use?\n\n"
                 + "\n".join(lines)
@@ -292,7 +408,6 @@ async def update_order_address(
         f"Delivery address updated for order *{order_number}*!\n\n"
         f"• New address: {delivery_display}"
     )
-
 
 
 @tool
@@ -354,4 +469,10 @@ async def cancel_order(config: RunnableConfig, order_number: str) -> str:
     return f"Order {order_number} has been cancelled successfully."
 
 
-order_tools = [place_order, update_order_address, check_order_status, cancel_order]
+order_tools = [
+    place_order,
+    make_payment,
+    update_order_address,
+    check_order_status,
+    cancel_order,
+]

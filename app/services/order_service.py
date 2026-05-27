@@ -61,10 +61,23 @@ async def get_all_orders(db: AsyncSession) -> list[order_schema.OrderResponse]:
 
 
 async def get_order_by_order_number(db: AsyncSession, order_number: str) -> order_schema.OrderResponse:
+    # Try exact match first
     result = await db.execute(
         select(order_model.Order).filter(order_model.Order.order_number == order_number)
     )
     order = result.scalars().first()
+
+    # Fallback: try matching just the numeric part using ilike
+    if not order:
+        # Extract digits from the input (e.g. "ORD-123" or "#ORD-123" or "123" → "123")
+        digits = ''.join(c for c in order_number if c.isdigit())
+        if digits:
+            result = await db.execute(
+                select(order_model.Order).filter(
+                    order_model.Order.order_number.ilike(f"%{digits}")
+                )
+            )
+            order = result.scalars().first()
 
     if not order:
         raise exceptions.NotFoundException("Order not found.")
