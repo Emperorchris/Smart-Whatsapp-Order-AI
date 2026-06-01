@@ -1,5 +1,5 @@
-import asyncio
 import re
+
 # import logging
 from loguru import logger
 
@@ -9,11 +9,23 @@ from langchain_core.messages import HumanMessage
 from ..core import utils
 from ..db.schemas.message_schema import MessageSchema
 from ..ai.graph import agent_graph
-from ..ai.memory.conversation_memory import load_conversation_history, save_agent_messages, _extract_text_content
+from ..ai.memory.conversation_memory import (
+    load_conversation_history,
+    save_agent_messages,
+    _extract_text_content,
+)
 from .whatsapp_webhook_processing_service import IncomingWhatsAppPayload
 from ..db.schemas.customers_schema import CustomerResponse
 from ..db.schemas.conversation_schema import ConversationResponse
-from . import message_service, whatsapp_service, whatsapp_webhook_processing_service, conversation_service
+from . import (
+    message_service,
+    whatsapp_service,
+    whatsapp_webhook_processing_service,
+    conversation_service,
+)
+from . import staff_service
+from .whatsapp_staff_webhook_service import _get_staff_mode
+
 
 # logger = logging.getLogger(__name__)
 
@@ -27,14 +39,46 @@ async def process_customer_message(
 ):
     """Process a single customer message: resolve context, run the AI agent, and send the reply."""
 
+    # Handle interactive address selection from checkout flow
+    if payload.interactive_id:
+        if payload.interactive_id.startswith("addr_select_"):
+            addr_id = payload.interactive_id[len("addr_select_") :]
+            if addr_id == "new":
+                payload.body = f"[Customer wants to add a new delivery address]"
+            else:
+                payload.body = f'[Customer selected saved address with ID: {addr_id}. Call place_order with customer_address_id="{addr_id}"]'
+        elif payload.interactive_id.startswith("chgaddr|"):
+            # Format: chgaddr|{order_number} — "Change Address" button on order confirmation
+            order_number = payload.interactive_id.split("|")[1] if "|" in payload.interactive_id else ""
+            payload.body = (
+                f'[Customer wants to change delivery address for order {order_number}. '
+                f'Call update_order_address with order_number="{order_number}" and NO other arguments. '
+                f'Do NOT add items to cart or do anything else.]'
+            )
+        elif payload.interactive_id.startswith("addrchg|"):
+            # Format: addrchg|{order_number}|{address_id_or_new}
+            parts = payload.interactive_id.split("|")
+            order_number = parts[1] if len(parts) > 1 else ""
+            addr_id = parts[2] if len(parts) > 2 else ""
+            if addr_id == "new":
+                payload.body = (
+                    f"[Customer wants to add a new delivery address for order {order_number}. "
+                    f"After saving the address with save_delivery_address, you MUST call "
+                    f'update_order_address with order_number="{order_number}" and the new address ID.]'
+                )
+            else:
+                payload.body = f'[Customer wants to change address for order {order_number}. Call update_order_address with order_number="{order_number}" and new_address_id="{addr_id}"]'
+        elif payload.interactive_id.startswith("addr_label_"):
+            label = payload.interactive_id[len("addr_label_") :]
+            payload.body = f"[Customer selected address type: {label}. Ask for their full address details: street, city, state, landmark.]"
+
     # If the user replied to a specific message, resolve what they're referring to
     reply_context = await whatsapp_webhook_processing_service.resolve_reply_context(
         db, payload.reply_to_message_id
     )
     if reply_context:
         payload.body = (
-            f'[Customer replied to this message: "{reply_context}"]\n\n'
-            f"{payload.body}"
+            f'[Customer replied to this message: "{reply_context}"]\n\n{payload.body}'
         )
 
     # Log inbound message
@@ -46,19 +90,38 @@ async def process_customer_message(
     )
 
     # Re-check handoff status from DB (the object may be stale in background tasks)
-    fresh_conversation = await conversation_service.get_conversation_by_id(db, str(active_conversation.id))
-    if fresh_conversation.handoff_to_human and fresh_conversation.handoff_status == utils.HandOffStatus.ACTIVE.value:
+    fresh_conversation = await conversation_service.get_conversation_by_id(
+        db, str(active_conversation.id)
+    )
+    if (
+        fresh_conversation.handoff_to_human
+        and fresh_conversation.handoff_status == utils.HandOffStatus.ACTIVE.value
+    ):
         # Forward customer message to the assigned staff member
         if fresh_conversation.assigned_staff_id:
             try:
-                from . import staff_service
-                staff = await staff_service.get_staff_by_id(db, str(fresh_conversation.assigned_staff_id))
+                staff = await staff_service.get_staff_by_id(
+                    db, str(fresh_conversation.assigned_staff_id)
+                )
                 if staff and staff.whatsapp_number:
                     customer_name = payload.profile_name or "Customer"
-                    # _normalize_phone inside send_message handles local→international format
-                    await whatsapp_service.send_message(
+                    current_mode = _get_staff_mode(str(staff.id))
+                    # Send customer message as interactive buttons so staff can act immediately
+                    await whatsapp_service.send_interactive_buttons(
                         to=staff.whatsapp_number,
-                        body=f"*{customer_name}:*\n{payload.body}",
+                        header=f"{customer_name} says:",
+                        body=payload.body[:1024],
+                        buttons=[
+                            {"id": "staff_mode_ai", "title": "Talk to AI"},
+                            {"id": "staff_cmd_done", "title": "Done"},
+                            {"id": "staff_cmd_skip", "title": "Skip"},
+                        ]
+                        if current_mode == "customer"
+                        else [
+                            {"id": "staff_mode_customer", "title": "Talk to Customer"},
+                            {"id": "staff_cmd_done", "title": "Done"},
+                            {"id": "staff_cmd_info", "title": "Info"},
+                        ],
                     )
             except Exception as exc:
                 logger.error("Failed to forward customer message to staff: {}", exc)
@@ -93,7 +156,11 @@ async def process_customer_message(
     #     else "Sorry, I couldn't process your request right now."
     # )
     raw_content = result["messages"][-1].content if result["messages"] else None
-    ai_reply = _extract_text_content(raw_content) if raw_content else "Sorry, I couldn't process your request right now."
+    ai_reply = (
+        _extract_text_content(raw_content)
+        if raw_content
+        else "Sorry, I couldn't process your request right now."
+    )
 
     # Only scan NEW messages from this agent run (not loaded history)
     new_messages = result["messages"][history_count:]
@@ -104,7 +171,9 @@ async def process_customer_message(
     product_blocks = _extract_product_blocks(new_messages)
 
     # Clean all product/media blocks from the final AI reply
-    ai_reply = re.sub(r"\[PRODUCT_START\].*?\[PRODUCT_END\]", "", ai_reply, flags=re.DOTALL)
+    ai_reply = re.sub(
+        r"\[PRODUCT_START\].*?\[PRODUCT_END\]", "", ai_reply, flags=re.DOTALL
+    )
     ai_reply = re.sub(r"\n*\[PRODUCT_MEDIA\].*?\[/PRODUCT_MEDIA\]", "", ai_reply)
     ai_reply = re.sub(r"\n*\[MEDIA_URLS\].*?\[/MEDIA_URLS\]", "", ai_reply)
     ai_reply = ai_reply.strip()
@@ -129,41 +198,39 @@ async def _send_reply(
     """Send the AI reply (with product media if any) back to the customer via WhatsApp."""
     try:
         if product_blocks:
-            # Send all product blocks concurrently
-            async def _send_block(block_text: str, block_media: list[str]):
-                if block_media:
-                    return block_text, await whatsapp_service.send_product_message(
-                        to=payload.sender_number, caption=block_text, media_urls=block_media,
+            # Send product blocks sequentially to preserve display order
+            for block_text, block_media in product_blocks:
+                try:
+                    if block_media:
+                        result_msg = await whatsapp_service.send_product_message(
+                            to=payload.sender_number,
+                            caption=block_text,
+                            media_urls=block_media,
+                        )
+                    else:
+                        result_msg = await whatsapp_service.send_message(
+                            to=payload.sender_number,
+                            body=block_text,
+                        )
+                    wamid = (
+                        result_msg.get("message_id")
+                        or (result_msg.get("media_ids") or [None])[-1]
                     )
-                return block_text, await whatsapp_service.send_message(
-                    to=payload.sender_number, body=block_text,
-                )
-
-            results = await asyncio.gather(
-                *[_send_block(text, media) for text, media in product_blocks],
-                return_exceptions=True,
-            )
-
-            # Save wamids for reply-to-message tracking
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.warning("Failed to send product block: %s", result)
-                    continue
-                block_text, result_msg = result
-                wamid = result_msg.get("message_id") or (result_msg.get("media_ids") or [None])[-1]
-                if wamid:
-                    await message_service.create_message(
-                        db,
-                        MessageSchema(
-                            conversation_id=active_conversation.id,
-                            sender_type=utils.MessageSenderType.AI.value,
-                            direction=utils.MessageDirection.OUTBOUND.value,
-                            message_type=utils.MessageType.TEXT.value,
-                            content=block_text,
-                            whatsapp_message_id=wamid,
-                            status=utils.MessageStatus.SENT.value,
-                        ),
-                    )
+                    if wamid:
+                        await message_service.create_message(
+                            db,
+                            MessageSchema(
+                                conversation_id=active_conversation.id,
+                                sender_type=utils.MessageSenderType.AI.value,
+                                direction=utils.MessageDirection.OUTBOUND.value,
+                                message_type=utils.MessageType.TEXT.value,
+                                content=block_text,
+                                whatsapp_message_id=wamid,
+                                status=utils.MessageStatus.SENT.value,
+                            ),
+                        )
+                except Exception as exc:
+                    logger.warning("Failed to send product block: %s", exc)
 
             if ai_reply:
                 await whatsapp_service.send_message(
@@ -205,10 +272,14 @@ def _extract_product_blocks(messages: list) -> list[tuple[str, list[str]]]:
             media_match = re.search(r"\[PRODUCT_MEDIA\](.*?)\[/PRODUCT_MEDIA\]", block)
             media_urls = []
             if media_match:
-                media_urls = [u.strip() for u in media_match.group(1).split(",") if u.strip()]
+                media_urls = [
+                    u.strip() for u in media_match.group(1).split(",") if u.strip()
+                ]
 
             # Clean the block text (remove media tags)
-            clean_text = re.sub(r"\n*\[PRODUCT_MEDIA\].*?\[/PRODUCT_MEDIA\]", "", block).strip()
+            clean_text = re.sub(
+                r"\n*\[PRODUCT_MEDIA\].*?\[/PRODUCT_MEDIA\]", "", block
+            ).strip()
 
             if clean_text:
                 blocks.append((clean_text, media_urls))

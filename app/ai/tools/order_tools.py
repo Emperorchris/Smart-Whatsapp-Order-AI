@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
+from ...db.model.order_model import Order
 from ...services import (
     order_service,
     product_service,
@@ -23,18 +24,11 @@ from ...core import utils, common
 async def place_order(
     config: RunnableConfig,
     customer_address_id: str = None,
-    # customer_address: customer_address_schema.CustomerAddressSchema = None,
-    # address_line: str = "",
-    # city: str = "",
-    # state: str = "",
-    # landmark: str = "",
-    use_default_address: bool = False,
 ) -> str:
     """Place an order from the customer's current cart.
     Use this when a customer wants to checkout or place an order.
-    Either set use_default_address=True to use the customer's saved default address,
-    or provide address_line, city, and state for a new delivery address.
-    If no address is provided at all, ask the customer for their delivery address before placing the order."""
+    Call this with NO parameters first — the system will send interactive buttons for the customer to pick a saved address or add a new one.
+    Only pass customer_address_id AFTER the customer has selected an address via the interactive buttons."""
 
     db: AsyncSession = config["configurable"]["db"]
     customer_id = config["configurable"]["customer_id"]
@@ -55,27 +49,59 @@ async def place_order(
 
     # Resolve delivery address
     address: customer_address_schema.CustomerAddressResponse | None = None
+    customer_phone = config["configurable"].get("customer_whatsapp_number", "")
 
-    if use_default_address:
-        try:
-            address = await customer_address_service.get_default_address(
-                db, customer_id
-            )
-        except Exception:
-            return "You don't have a default address saved. Please provide a delivery address or save one first."
-    elif customer_address_id:
+    if customer_address_id:
         try:
             address = await customer_address_service.get_address_by_id(
                 db, customer_address_id
             )
         except Exception:
-            return "That address was not found. Please provide a valid address or use your default."
+            return "That address was not found. Please provide a valid address."
     else:
-        # No address provided — prompt the customer to add or select one
+        # No address provided — always show address selection
         addresses = await customer_address_service.get_addresses_by_customer_id(
             db, customer_id
         )
-        if addresses:
+        logger.info(
+            "place_order: phone={!r}, saved_addresses={}",
+            customer_phone,
+            len(addresses) if addresses else 0,
+        )
+        if addresses and customer_phone:
+            # Send saved addresses as interactive buttons
+            rows = []
+            for addr in addresses:
+                default_tag = " (default)" if addr.is_default else ""
+                rows.append(
+                    {
+                        "id": f"addr_select_{addr.id}",
+                        "title": f"{addr.label.capitalize()}{default_tag}",
+                        "description": f"{addr.address_line}, {addr.city}",
+                    }
+                )
+            rows.append(
+                {
+                    "id": "addr_select_new",
+                    "title": "Add new address",
+                    "description": "Enter a new delivery address",
+                }
+            )
+            try:
+                await whatsapp_service.send_interactive_list(
+                    to=customer_phone,
+                    body="Pick a delivery address for your order:",
+                    button_text="Select address",
+                    sections=[{"title": "Saved Addresses", "rows": rows}],
+                    header="Delivery Address",
+                )
+            except Exception as exc:
+                logger.error("place_order: FAILED to send address list — {}", exc)
+            return (
+                "I've sent the customer their saved addresses to pick from. "
+                "Wait for their selection before proceeding."
+            )
+        elif addresses:
             lines = []
             for i, addr in enumerate(addresses, 1):
                 default_tag = " *(default)*" if addr.is_default else ""
@@ -87,8 +113,8 @@ async def place_order(
                 + "\n".join(lines)
                 + "\n\nWhich one should I use? Or you can add a new address."
             )
-        # Send interactive list to collect address
-        customer_phone = config["configurable"].get("customer_whatsapp_number", "")
+
+        # No saved addresses — send interactive list to collect address type
         logger.info("place_order: customer_phone from config = {!r}", customer_phone)
         if customer_phone:
             labels = [member for member in utils.AddressLabel]
@@ -105,7 +131,7 @@ async def place_order(
                 }
             ]
             try:
-                result = await whatsapp_service.send_interactive_list(
+                await whatsapp_service.send_interactive_list(
                     to=customer_phone,
                     body="You need a delivery address to place your order. What type of address is this?",
                     button_text="Select type",
@@ -113,7 +139,7 @@ async def place_order(
                     header="Delivery Address",
                     footer="Step 1 of 2",
                 )
-                logger.info("place_order: interactive list sent successfully — {}", result)
+                logger.info("place_order: interactive list sent successfully")
             except Exception as exc:
                 logger.error("place_order: FAILED to send interactive list — {}", exc)
             return (
@@ -237,7 +263,9 @@ async def place_order(
         try:
             accounts = await bank_account_service.get_all_bank_accounts(db)
             if accounts:
-                default_account = next((a for a in accounts if a.is_default), accounts[0])
+                default_account = next(
+                    (a for a in accounts if a.is_default), accounts[0]
+                )
                 payment_info = (
                     f"\n\nTo complete payment, transfer *NGN {total_amount:,.2f}* to:\n\n"
                     f"• Bank: *{default_account.bank_name}*\n"
@@ -248,14 +276,31 @@ async def place_order(
         except Exception:
             pass
 
-        return (
+        # Send order confirmation with interactive "Change Address" button
+        customer_phone = config["configurable"].get("customer_whatsapp_number")
+        confirmation_body = (
             f"Order placed successfully!\n\n"
             f"• Order Number: *{order_number}*\n"
             f"• Status: *{order.status}*\n"
             f"• Total: *NGN {total_amount:,.2f}*\n"
-            f"• Delivery Address: {delivery_display}\n\n"
-            f"Review your delivery address. If it's incorrect, reply with *Change Address* to update it before the order is processed."
+            f"• Delivery Address: {delivery_display}"
             f"{payment_info}"
+        )
+        if customer_phone:
+            try:
+                await whatsapp_service.send_interactive_buttons(
+                    to=customer_phone,
+                    body=confirmation_body,
+                    buttons=[
+                        {"id": f"chgaddr|{order_number}", "title": "Change Address"},
+                    ],
+                )
+            except Exception:
+                await whatsapp_service.send_message(to=customer_phone, body=confirmation_body)
+
+        return (
+            f"Order {order_number} placed. Total: NGN {total_amount:,.2f}. "
+            f"Delivery: {delivery_display}. Confirmation sent to customer."
         )
     except Exception as e:
         await db.rollback()
@@ -323,12 +368,17 @@ async def update_order_address(
     new_address_id: str = None,
     use_default_address: bool = False,
 ) -> str:
-    """Update the delivery address for an existing order that hasn't been processed yet.
-    Use this when a customer wants to change the delivery address for an order they just placed.
-    Either provide new_address_id (ID of a saved address) or set use_default_address=True."""
+    """ALWAYS call this tool when the customer says 'change address' or 'update address' for an order.
+    Call with just order_number (no new_address_id) to send interactive address picker buttons.
+    Do NOT list addresses yourself — this tool sends the interactive buttons automatically.
+    Args:
+        order_number: The order number to update.
+        new_address_id: Optional saved address ID. Omit to show address picker.
+        use_default_address: Set True to use the customer's default address."""
 
     db: AsyncSession = config["configurable"]["db"]
     customer_id = config["configurable"]["customer_id"]
+    logger.info("update_order_address: called — order={}, addr_id={}", order_number, new_address_id)
 
     try:
         order = await order_service.get_order_by_order_number(db, order_number)
@@ -364,11 +414,39 @@ async def update_order_address(
         except Exception:
             return "That address was not found."
     else:
-        # List saved addresses for the customer to pick
+        # List saved addresses as interactive buttons
+        customer_phone = config["configurable"].get("customer_whatsapp_number")
         addresses = await customer_address_service.get_addresses_by_customer_id(
             db, customer_id
         )
-        if addresses:
+        if addresses and customer_phone:
+            rows = []
+            for addr in addresses:
+                default_tag = " (default)" if addr.is_default else ""
+                rows.append({
+                    "id": f"addrchg|{order.order_number}|{addr.id}",
+                    "title": f"{addr.label.capitalize()}{default_tag}",
+                    "description": f"{addr.address_line}, {addr.city}",
+                })
+            rows.append({
+                "id": f"addrchg|{order.order_number}|new",
+                "title": "Add new address",
+                "description": "Enter a new delivery address",
+            })
+            try:
+                await whatsapp_service.send_interactive_list(
+                    to=customer_phone,
+                    body=f"Pick a new delivery address for order #{order.order_number}:",
+                    button_text="Select address",
+                    sections=[{"title": "Saved Addresses", "rows": rows}],
+                    header="Change Address",
+                )
+            except Exception as exc:
+                logger.error("update_order_address: FAILED to send address list — {}", exc)
+            return (
+                "I've sent the address options. Wait for the customer to pick one."
+            )
+        elif addresses:
             lines = []
             for i, addr in enumerate(addresses, 1):
                 default_tag = " *(default)*" if addr.is_default else ""
@@ -412,38 +490,94 @@ async def update_order_address(
 
 @tool
 async def check_order_status(config: RunnableConfig, order_number: str = None) -> str:
-    """Check the status of customer's orders.
+    """Check the status of customer's orders with item details.
     If an order number is provided, shows that specific order.
-    Otherwise shows all orders for the customer."""
+    Otherwise shows all orders as individual cards with items.
+    Pending/paid orders get a Change Address button."""
 
     db = config["configurable"]["db"]
     customer_id = config["configurable"]["customer_id"]
+    customer_phone = config["configurable"].get("customer_whatsapp_number")
 
     if order_number:
         try:
-            order = await order_service.get_order_by_order_number(db, order_number)
-            if str(order.customer_id) != customer_id:
+            # Use service for lookup (handles fuzzy matching), then fetch ORM for items
+            order_resp = await order_service.get_order_by_order_number(db, order_number)
+            if str(order_resp.customer_id) != customer_id:
                 return f"No order found with number {order_number} in your account."
-            return (
-                f"Order *{order.order_number}*\n\n"
-                f"• Status: *{order.status}*\n"
-                f"• Total: *NGN {order.total_amount:,.2f}*"
-            )
+            result = await db.execute(select(Order).where(Order.id == order_resp.id))
+            order = result.scalars().first()
+            if not order:
+                return f"No order found with number {order_number}."
+            await _send_order_card(order, customer_phone)
+            return f"Order {order.order_number} details sent."
         except Exception:
             return f"No order found with number {order_number}."
 
-    orders = await order_service.get_orders_by_customer_id(db, customer_id)
+    # Fetch ORM objects directly to get order_items relationship
+    result = await db.execute(
+        select(Order).where(Order.customer_id == customer_id).order_by(Order.created_at.desc())
+    )
+    orders = list(result.scalars().all())
     if not orders:
         return "You don't have any orders yet."
 
-    lines = []
     for o in orders:
-        lines.append(
-            f"• Order *{o.order_number}*\n"
-            f"  Status: *{o.status}*\n"
-            f"  Total: *NGN {o.total_amount:,.2f}*"
-        )
-    return "Here are your orders:\n\n" + "\n\n".join(lines)
+        await _send_order_card(o, customer_phone)
+
+    return f"Sent {len(orders)} order(s) to the customer."
+
+
+async def _send_order_card(order, customer_phone: str | None):
+    """Send a single order as a WhatsApp card with items and optional Change Address button."""
+    body = (
+        f"*Order {order.order_number}*\n"
+        f"Status: *{order.status}*  |  Payment: *{order.payment_status}*\n"
+        f"Total: *NGN {order.total_amount:,.2f}*"
+    )
+
+    if order.address_line:
+        delivery = f"{order.address_line}, {order.address_city}, {order.address_state}"
+        if order.address_landmark:
+            delivery += f" (Landmark: {order.address_landmark})"
+        body += f"\nDelivery: {delivery}"
+
+    if order.order_items:
+        body += "\n\n*Items:*"
+        for item in order.order_items:
+            name = item.product_name or "Unknown"
+            if item.product_variant_attributes:
+                attrs = ", ".join(str(v) for v in item.product_variant_attributes.values())
+                name += f" ({attrs})"
+            body += f"\n• {item.quantity} unit(s) of {name} — NGN {item.subtotal:,.2f}"
+
+    if not customer_phone:
+        return
+
+    # Pending/paid orders get a Change Address button
+    can_change = order.status in [
+        utils.OrderStatus.PENDING.value,
+        utils.OrderStatus.PAID.value,
+    ]
+
+    if can_change:
+        try:
+            await whatsapp_service.send_interactive_buttons(
+                to=customer_phone,
+                body=body,
+                buttons=[
+                    {"id": f"chgaddr|{order.order_number}", "title": "Change Address"},
+                ],
+            )
+            return
+        except Exception as exc:
+            logger.error("_send_order_card: button send failed — {}", exc)
+
+    # Fallback or non-changeable orders: plain text
+    try:
+        await whatsapp_service.send_message(to=customer_phone, body=body)
+    except Exception as exc:
+        logger.error("_send_order_card: message send failed — {}", exc)
 
 
 @tool

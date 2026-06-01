@@ -1,19 +1,19 @@
-"""create tables
+"""initial_tables
 
-Revision ID: 992908d31ec1
-Revises: 676b5c7ce865
-Create Date: 2026-05-19 13:05:03.771001
+Revision ID: ecafcc00c99b
+Revises: 
+Create Date: 2026-05-28 07:19:12.603992
 
 """
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+
 
 # revision identifiers, used by Alembic.
-revision: str = '992908d31ec1'
-down_revision: Union[str, Sequence[str], None] = '676b5c7ce865'
+revision: str = 'ecafcc00c99b'
+down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -44,6 +44,22 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_categories_id'), 'categories', ['id'], unique=True)
+    op.create_table('customers',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('name', sa.String(), nullable=False),
+    sa.Column('whatsapp_number', sa.String(), nullable=False),
+    sa.Column('display_name', sa.String(), nullable=True),
+    sa.Column('email', sa.String(), nullable=True),
+    sa.Column('customer_type', sa.String(), nullable=False),
+    sa.Column('customer_status', sa.String(), nullable=False),
+    sa.Column('customer_segment', sa.String(), nullable=True),
+    sa.Column('metadata', sa.JSON(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_customers_id'), 'customers', ['id'], unique=True)
+    op.create_index(op.f('ix_customers_whatsapp_number'), 'customers', ['whatsapp_number'], unique=True)
     op.create_table('processed_webhooks',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('source', sa.String(), nullable=True),
@@ -99,6 +115,25 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_conversations_id'), 'conversations', ['id'], unique=True)
+    op.create_table('customer_addresses',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('customer_id', sa.Uuid(), nullable=False),
+    sa.Column('label', sa.String(), nullable=True),
+    sa.Column('full_name', sa.String(), nullable=True),
+    sa.Column('phone_number', sa.String(), nullable=True),
+    sa.Column('address_line', sa.String(), nullable=False),
+    sa.Column('city', sa.String(), nullable=False),
+    sa.Column('state', sa.String(), nullable=False),
+    sa.Column('country', sa.String(), nullable=False),
+    sa.Column('postal_code', sa.String(), nullable=True),
+    sa.Column('landmark', sa.String(), nullable=True),
+    sa.Column('is_default', sa.Boolean(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['customer_id'], ['customers.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_customer_addresses_id'), 'customer_addresses', ['id'], unique=True)
     op.create_table('orders',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('customer_id', sa.Uuid(), nullable=True),
@@ -108,11 +143,19 @@ def upgrade() -> None:
     sa.Column('status', sa.String(), nullable=True),
     sa.Column('total_amount', sa.Numeric(precision=12, scale=2), nullable=True),
     sa.Column('payment_status', sa.String(), nullable=True),
-    sa.Column('delivery_address', sa.Text(), nullable=True),
+    sa.Column('address_label', sa.String(), nullable=True),
+    sa.Column('address_full_name', sa.String(), nullable=True),
+    sa.Column('address_phone_number', sa.String(), nullable=True),
+    sa.Column('address_line', sa.String(), nullable=True),
+    sa.Column('address_city', sa.String(), nullable=True),
+    sa.Column('address_state', sa.String(), nullable=True),
+    sa.Column('address_country', sa.String(), nullable=True),
+    sa.Column('address_postal_code', sa.String(), nullable=True),
+    sa.Column('address_landmark', sa.String(), nullable=True),
     sa.Column('extra_metadata', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['customer_id'], ['customers.id'], ),
+    sa.ForeignKeyConstraint(['customer_id'], ['customers.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('order_number')
     )
@@ -125,10 +168,8 @@ def upgrade() -> None:
     sa.Column('price', sa.Numeric(precision=12, scale=2), nullable=True),
     sa.Column('sku', sa.String(), nullable=True),
     sa.Column('category_id', sa.Uuid(), nullable=True),
-    sa.Column('image_urls', sa.JSON(), nullable=True),
-    sa.Column('video_urls', sa.JSON(), nullable=True),
-    sa.Column('live_image_urls', sa.JSON(), nullable=True),
-    sa.Column('live_video_urls', sa.JSON(), nullable=True),
+    sa.Column('media', sa.JSON(), nullable=True),
+    sa.Column('tags', sa.JSON(), nullable=True),
     sa.Column('is_active', sa.Boolean(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -138,20 +179,6 @@ def upgrade() -> None:
     sa.UniqueConstraint('tracking_id')
     )
     op.create_index(op.f('ix_products_id'), 'products', ['id'], unique=True)
-    op.create_table('cart_items',
-    sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('cart_id', sa.UUID(), nullable=False),
-    sa.Column('product_id', sa.Uuid(), nullable=False),
-    sa.Column('quantity', sa.Integer(), nullable=False),
-    sa.Column('unit_price', sa.Numeric(precision=12, scale=2), nullable=True),
-    sa.Column('subtotal', sa.Numeric(precision=12, scale=2), nullable=True),
-    sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['cart_id'], ['carts.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['product_id'], ['products.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_cart_items_id'), 'cart_items', ['id'], unique=True)
     op.create_table('human_hand_offs',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('conversation_id', sa.Uuid(), nullable=False),
@@ -189,30 +216,17 @@ def upgrade() -> None:
     sa.Column('message_type', sa.String(), nullable=False),
     sa.Column('content', sa.Text(), nullable=True),
     sa.Column('media_urls', sa.JSON(), nullable=True),
+    sa.Column('tool_metadata', sa.JSON(), nullable=True),
     sa.Column('status', sa.String(), nullable=True),
     sa.Column('whatsapp_message_id', sa.String(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('updated_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['conversation_id'], ['conversations.id'], ),
+    sa.ForeignKeyConstraint(['conversation_id'], ['conversations.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['staff_id'], ['staff.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('whatsapp_message_id')
     )
     op.create_index(op.f('ix_messages_id'), 'messages', ['id'], unique=True)
-    op.create_table('order_items',
-    sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('order_id', sa.UUID(), nullable=True),
-    sa.Column('product_id', sa.Uuid(), nullable=True),
-    sa.Column('product_name', sa.String(), nullable=True),
-    sa.Column('product_sku', sa.String(), nullable=True),
-    sa.Column('quantity', sa.Integer(), nullable=True),
-    sa.Column('unit_price', sa.Numeric(precision=12, scale=2), nullable=True),
-    sa.Column('subtotal', sa.Numeric(precision=12, scale=2), nullable=True),
-    sa.ForeignKeyConstraint(['order_id'], ['orders.id'], ),
-    sa.ForeignKeyConstraint(['product_id'], ['products.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_order_items_id'), 'order_items', ['id'], unique=True)
     op.create_table('payments',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('order_id', sa.UUID(), nullable=True),
@@ -223,7 +237,7 @@ def upgrade() -> None:
     sa.Column('payment_url', sa.Text(), nullable=True),
     sa.Column('paid_at', sa.DateTime(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['order_id'], ['orders.id'], ),
+    sa.ForeignKeyConstraint(['order_id'], ['orders.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('payment_reference')
     )
@@ -242,56 +256,69 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_product_variants_id'), 'product_variants', ['id'], unique=True)
-    op.drop_index(op.f('ix_vendors_id'), table_name='vendors')
-    op.drop_table('vendors')
-    op.add_column('customers', sa.Column('email', sa.String(), nullable=True))
-    op.add_column('customers', sa.Column('customer_type', sa.String(), nullable=False))
-    op.add_column('customers', sa.Column('customer_status', sa.String(), nullable=False))
-    op.add_column('customers', sa.Column('customer_segment', sa.String(), nullable=True))
+    op.create_table('cart_items',
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('cart_id', sa.UUID(), nullable=False),
+    sa.Column('product_id', sa.Uuid(), nullable=False),
+    sa.Column('variant_id', sa.Uuid(), nullable=True),
+    sa.Column('quantity', sa.Integer(), nullable=False),
+    sa.Column('unit_price', sa.Numeric(precision=12, scale=2), nullable=True),
+    sa.Column('subtotal', sa.Numeric(precision=12, scale=2), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['cart_id'], ['carts.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['product_id'], ['products.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['variant_id'], ['product_variants.id'], ondelete='SET NULL'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_cart_items_id'), 'cart_items', ['id'], unique=True)
+    op.create_table('order_items',
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('order_id', sa.UUID(), nullable=True),
+    sa.Column('product_id', sa.Uuid(), nullable=True),
+    sa.Column('variant_id', sa.Uuid(), nullable=True),
+    sa.Column('product_name', sa.String(), nullable=True),
+    sa.Column('product_sku', sa.String(), nullable=True),
+    sa.Column('product_description', sa.Text(), nullable=True),
+    sa.Column('product_category', sa.String(), nullable=True),
+    sa.Column('product_media', sa.JSON(), nullable=True),
+    sa.Column('product_variant_attributes', sa.JSON(), nullable=True),
+    sa.Column('quantity', sa.Integer(), nullable=True),
+    sa.Column('unit_price', sa.Numeric(precision=12, scale=2), nullable=True),
+    sa.Column('subtotal', sa.Numeric(precision=12, scale=2), nullable=True),
+    sa.Column('delivery_status', sa.String(), nullable=True),
+    sa.ForeignKeyConstraint(['order_id'], ['orders.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['product_id'], ['products.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['variant_id'], ['product_variants.id'], ondelete='SET NULL'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_order_items_id'), 'order_items', ['id'], unique=True)
     # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     """Downgrade schema."""
     # ### commands auto generated by Alembic - please adjust! ###
-    op.drop_column('customers', 'customer_segment')
-    op.drop_column('customers', 'customer_status')
-    op.drop_column('customers', 'customer_type')
-    op.drop_column('customers', 'email')
-    op.create_table('vendors',
-    sa.Column('id', sa.UUID(), autoincrement=False, nullable=False),
-    sa.Column('name', sa.VARCHAR(), autoincrement=False, nullable=False),
-    sa.Column('slug', sa.VARCHAR(), autoincrement=False, nullable=False),
-    sa.Column('whatsapp_number', sa.VARCHAR(), autoincrement=False, nullable=False),
-    sa.Column('description', sa.TEXT(), autoincrement=False, nullable=True),
-    sa.Column('routing_keywords', postgresql.JSON(astext_type=sa.Text()), autoincrement=False, nullable=True),
-    sa.Column('settings', postgresql.JSON(astext_type=sa.Text()), autoincrement=False, nullable=True),
-    sa.Column('active', sa.BOOLEAN(), autoincrement=False, nullable=False),
-    sa.Column('created_at', postgresql.TIMESTAMP(), autoincrement=False, nullable=False),
-    sa.Column('updated_at', postgresql.TIMESTAMP(), autoincrement=False, nullable=False),
-    sa.PrimaryKeyConstraint('id', name=op.f('vendors_pkey')),
-    sa.UniqueConstraint('slug', name=op.f('vendors_slug_key'), postgresql_include=[], postgresql_nulls_not_distinct=False),
-    sa.UniqueConstraint('whatsapp_number', name=op.f('vendors_whatsapp_number_key'), postgresql_include=[], postgresql_nulls_not_distinct=False)
-    )
-    op.create_index(op.f('ix_vendors_id'), 'vendors', ['id'], unique=True)
+    op.drop_index(op.f('ix_order_items_id'), table_name='order_items')
+    op.drop_table('order_items')
+    op.drop_index(op.f('ix_cart_items_id'), table_name='cart_items')
+    op.drop_table('cart_items')
     op.drop_index(op.f('ix_product_variants_id'), table_name='product_variants')
     op.drop_table('product_variants')
     op.drop_index(op.f('ix_payments_id'), table_name='payments')
     op.drop_table('payments')
-    op.drop_index(op.f('ix_order_items_id'), table_name='order_items')
-    op.drop_table('order_items')
     op.drop_index(op.f('ix_messages_id'), table_name='messages')
     op.drop_table('messages')
     op.drop_index(op.f('ix_inventory_id'), table_name='inventory')
     op.drop_table('inventory')
     op.drop_index(op.f('ix_human_hand_offs_id'), table_name='human_hand_offs')
     op.drop_table('human_hand_offs')
-    op.drop_index(op.f('ix_cart_items_id'), table_name='cart_items')
-    op.drop_table('cart_items')
     op.drop_index(op.f('ix_products_id'), table_name='products')
     op.drop_table('products')
     op.drop_index(op.f('ix_orders_id'), table_name='orders')
     op.drop_table('orders')
+    op.drop_index(op.f('ix_customer_addresses_id'), table_name='customer_addresses')
+    op.drop_table('customer_addresses')
     op.drop_index(op.f('ix_conversations_id'), table_name='conversations')
     op.drop_table('conversations')
     op.drop_index(op.f('ix_carts_id'), table_name='carts')
@@ -300,6 +327,9 @@ def downgrade() -> None:
     op.drop_table('staff')
     op.drop_index(op.f('ix_processed_webhooks_id'), table_name='processed_webhooks')
     op.drop_table('processed_webhooks')
+    op.drop_index(op.f('ix_customers_whatsapp_number'), table_name='customers')
+    op.drop_index(op.f('ix_customers_id'), table_name='customers')
+    op.drop_table('customers')
     op.drop_index(op.f('ix_categories_id'), table_name='categories')
     op.drop_table('categories')
     op.drop_index(op.f('ix_bank_accounts_id'), table_name='bank_accounts')

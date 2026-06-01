@@ -87,8 +87,16 @@ async def check_handoff_status(db: AsyncSession, conversation_id: str) -> str:
 
 
 
-async def get_all_handoffs(db: AsyncSession) -> list[human_hand_off_schema.HumanHandOffResponse]:
-    result = await db.execute(select(human_hand_off_model.HumanHandOff))
+async def get_all_handoffs(
+    db: AsyncSession,
+    status: str | None = None,
+    limit: int = 20,
+) -> list[human_hand_off_schema.HumanHandOffResponse]:
+    query = select(human_hand_off_model.HumanHandOff)
+    if status:
+        query = query.filter(human_hand_off_model.HumanHandOff.status == status)
+    query = query.order_by(human_hand_off_model.HumanHandOff.requested_at.desc()).limit(limit)
+    result = await db.execute(query)
     handoffs = result.scalars().all()
     return [human_hand_off_schema.HumanHandOffResponse.model_validate(h) for h in handoffs]
 

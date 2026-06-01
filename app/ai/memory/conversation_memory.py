@@ -1,5 +1,5 @@
 import uuid as uuid_mod
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from langchain_core.messages import (
     HumanMessage,
@@ -8,6 +8,7 @@ from langchain_core.messages import (
     AnyMessage,
 )
 from ...db.model.message_model import Message
+from ...db.model.conversation_model import Conversation
 from ...core.utils import (
     MessageDirection,
     MessageSenderType,
@@ -16,22 +17,65 @@ from ...core.utils import (
 )
 
 
-MAX_HISTORY = 30
+# Keep last N raw messages — older ones get summarized
+RECENT_RAW_MESSAGES = 6
+# Trigger summarization when total messages exceed this threshold
+SUMMARIZE_THRESHOLD = 10
 
 
 async def load_conversation_history(
     db: AsyncSession, conversation_id: str
 ) -> list[AnyMessage]:
+    """Load conversation history with summarization.
+    Returns: [summary_message (if exists)] + [last N raw messages]
+    """
+    # Get the conversation's existing summary
+    conv_result = await db.execute(
+        select(Conversation).filter(Conversation.id == conversation_id)
+    )
+    conversation = conv_result.scalars().first()
+    summary = conversation.summary if conversation else None
+    summary_count = (conversation.summary_message_count or 0) if conversation else 0
+
+    # Count total messages
+    count_result = await db.execute(
+        select(func.count()).select_from(Message).filter(
+            Message.conversation_id == conversation_id
+        )
+    )
+    total_messages = count_result.scalar() or 0
+
+    # Load recent raw messages
     result = await db.execute(
         select(Message)
         .filter(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.asc())
+        .order_by(Message.created_at.desc())
+        .limit(RECENT_RAW_MESSAGES)
     )
-    rows = list(result.scalars().all())
+    rows = list(reversed(result.scalars().all()))
 
-    rows = rows[-MAX_HISTORY:]
+    # If we have enough messages and no summary yet (or summary is stale), generate one
+    older_unsummarized = total_messages - len(rows)
+    if older_unsummarized > 0 and older_unsummarized > summary_count:
+        await _generate_summary(db, conversation_id, total_messages - len(rows))
 
+        # Reload the summary
+        conv_result = await db.execute(
+            select(Conversation).filter(Conversation.id == conversation_id)
+        )
+        conversation = conv_result.scalars().first()
+        summary = conversation.summary if conversation else None
+
+    # Build message list
     messages: list[AnyMessage] = []
+
+    # Prepend summary as context if available
+    if summary:
+        messages.append(HumanMessage(
+            content=f"[Conversation summary so far: {summary}]"
+        ))
+
+    # Add recent raw messages
     for row in rows:
         content = row.content or ""
 
@@ -39,7 +83,6 @@ async def load_conversation_history(
             tool_calls = []
             if row.tool_metadata and isinstance(row.tool_metadata, list):
                 tool_calls = row.tool_metadata
-
             msg = AIMessage(content=content, tool_calls=tool_calls)
             messages.append(msg)
 
@@ -47,7 +90,6 @@ async def load_conversation_history(
             meta = {}
             if row.tool_metadata and isinstance(row.tool_metadata, dict):
                 meta = row.tool_metadata
-
             msg = ToolMessage(
                 content=content,
                 tool_call_id=meta.get("tool_call_id", str(uuid_mod.uuid4())),
@@ -62,6 +104,89 @@ async def load_conversation_history(
             messages.append(AIMessage(content=content))
 
     return _sanitize_message_sequence(messages)
+
+
+async def _generate_summary(
+    db: AsyncSession, conversation_id: str, message_count: int
+) -> None:
+    """Generate a rule-based summary from older messages (no LLM call needed)."""
+    # Load the older messages that need summarizing
+    result = await db.execute(
+        select(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc())
+        .limit(message_count)
+    )
+    rows = result.scalars().all()
+
+    if not rows:
+        return
+
+    # Extract key facts from messages
+    facts = []
+    for row in rows:
+        content = (row.content or "").strip()
+        if not content:
+            continue
+
+        # Customer messages — capture what they asked for
+        if row.direction == MessageDirection.INBOUND.value:
+            # Skip system-injected messages
+            if content.startswith("[Customer selected") or content.startswith("[Customer wants"):
+                continue
+            if len(content) > 5:
+                facts.append(f"Customer: {content[:100]}")
+
+        # AI text responses — capture key info
+        elif row.message_type == MessageType.TEXT.value and row.sender_type == MessageSenderType.AI.value:
+            # Extract order numbers
+            if "#ORD-" in content:
+                import re
+                orders = re.findall(r"#ORD-\d+", content)
+                for order in orders:
+                    facts.append(f"Order placed: {order}")
+            # Extract cart actions
+            elif "added" in content.lower() and "cart" in content.lower():
+                facts.append(f"AI: {content[:80]}")
+
+        # Tool results — extract key outcomes
+        elif row.message_type == MessageType.TOOL_RESULT.value:
+            if "Address saved" in content:
+                # Extract address from tool result
+                lines = content.split("\n")
+                addr_parts = [line.strip("• ").strip() for line in lines if line.strip().startswith("•")]
+                if addr_parts:
+                    facts.append(f"Address saved: {', '.join(addr_parts[:3])}")
+            elif "Order placed" in content or "order_number" in content.lower():
+                import re
+                orders = re.findall(r"#?ORD-\d+", content)
+                if orders:
+                    facts.append(f"Order created: {orders[0]}")
+
+    if not facts:
+        return
+
+    # Deduplicate and limit
+    seen = set()
+    unique_facts = []
+    for f in facts:
+        key = f[:50].lower()
+        if key not in seen:
+            seen.add(key)
+            unique_facts.append(f)
+
+    # Cap at 8 facts to keep summary short
+    summary = ". ".join(unique_facts[:8])
+
+    # Save summary to conversation
+    conv_result = await db.execute(
+        select(Conversation).filter(Conversation.id == conversation_id)
+    )
+    conversation = conv_result.scalars().first()
+    if conversation:
+        conversation.summary = summary
+        conversation.summary_message_count = message_count
+        await db.commit()
 
 
 def _sanitize_message_sequence(messages: list[AnyMessage]) -> list[AnyMessage]:
@@ -143,8 +268,7 @@ async def save_agent_messages(
                     sender_type=MessageSenderType.AI.value,
                     direction=MessageDirection.OUTBOUND.value,
                     message_type=MessageType.TOOL_CALL.value,
-                    # content=msg.content or "",  # OpenAI returns str
-                    content=_extract_text_content(msg.content),  # Claude returns list of blocks
+                    content=_extract_text_content(msg.content),
                     tool_metadata=serializable_calls,
                     status=MessageStatus.SENT.value,
                 )
@@ -156,8 +280,7 @@ async def save_agent_messages(
                     sender_type=MessageSenderType.AI.value,
                     direction=MessageDirection.OUTBOUND.value,
                     message_type=MessageType.TEXT.value,
-                    # content=msg.content or "",  # OpenAI returns str
-                    content=_extract_text_content(msg.content),  # Claude returns list of blocks
+                    content=_extract_text_content(msg.content),
                     status=MessageStatus.SENT.value,
                 )
                 db.add(db_msg)
@@ -168,7 +291,7 @@ async def save_agent_messages(
                 sender_type=MessageSenderType.TOOL.value,
                 direction=MessageDirection.OUTBOUND.value,
                 message_type=MessageType.TOOL_RESULT.value,
-                content=_extract_text_content(msg.content),  # safe for both OpenAI and Claude
+                content=_extract_text_content(msg.content),
                 tool_metadata={
                     "tool_call_id": getattr(msg, "tool_call_id", ""),
                     "tool_name": getattr(msg, "name", ""),

@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 from ...core.dependencies import DBSession
 from ...services import message_service
 from ...db.schemas import message_schema
@@ -34,6 +34,15 @@ async def get_message_by_whatsapp_id(whatsapp_message_id: str, db: DBSession):
 @message_router.put("/{message_id}", response_model=message_schema.MessageResponse)
 async def update_message(message_id: str, message_data: message_schema.MessageSchema, db: DBSession):
     return await message_service.update_message(db, message_id, message_data)
+
+
+@message_router.patch("/{message_id}/status", response_model=message_schema.MessageResponse)
+async def update_message_status(
+    message_id: str,
+    db: DBSession,
+    status: str = Body(..., embed=True),
+):
+    return await message_service.update_message_status(db, message_id, status)
 
 
 @message_router.delete("/{message_id}", status_code=204)

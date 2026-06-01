@@ -1,10 +1,13 @@
-from sqlalchemy import select
+import math
+from datetime import date, datetime, timezone
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timezone
 
 from ..db.schemas import conversation_schema
 from ..core import exceptions, utils
 from ..db.model import conversation_model, staff_model, human_hand_off_model
+from ..db.model.customer_model import Customer
 
 
 async def create_conversation(db: AsyncSession, conversation_data: conversation_schema.ConversationSchema) -> conversation_schema.ConversationResponse:
@@ -182,3 +185,79 @@ async def delete_conversation(db: AsyncSession, conversation_id: str):
 
     await db.delete(conversation)
     await db.commit()
+
+
+async def get_filtered_conversations(
+    db: AsyncSession,
+    status: str | None = None,
+    handoff_status: str | None = None,
+    customer_id: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> conversation_schema.PaginatedConversationResponse:
+    Convo = conversation_model.Conversation
+
+    base = select(
+        Convo.id,
+        Convo.customer_id,
+        Customer.name.label("customer_name"),
+        Customer.whatsapp_number.label("customer_whatsapp_number"),
+        Convo.status,
+        Convo.handoff_status,
+        Convo.ai_enabled,
+        Convo.started_at,
+        Convo.ended_at,
+    ).join(Customer, Convo.customer_id == Customer.id)
+
+    count_q = select(func.count(Convo.id)).join(Customer, Convo.customer_id == Customer.id)
+
+    if status:
+        base = base.where(Convo.status == status)
+        count_q = count_q.where(Convo.status == status)
+    if handoff_status:
+        base = base.where(Convo.handoff_status == handoff_status)
+        count_q = count_q.where(Convo.handoff_status == handoff_status)
+    if customer_id:
+        base = base.where(Convo.customer_id == customer_id)
+        count_q = count_q.where(Convo.customer_id == customer_id)
+    if start_date:
+        dt = datetime.combine(start_date, datetime.min.time())
+        base = base.where(Convo.started_at >= dt)
+        count_q = count_q.where(Convo.started_at >= dt)
+    if end_date:
+        dt = datetime.combine(end_date, datetime.max.time())
+        base = base.where(Convo.started_at <= dt)
+        count_q = count_q.where(Convo.started_at <= dt)
+
+    total = (await db.execute(count_q)).scalar() or 0
+
+    rows = (await db.execute(
+        base.order_by(Convo.started_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )).all()
+
+    items = [
+        conversation_schema.ConversationListItem(
+            id=r.id,
+            customer_id=r.customer_id,
+            customer_name=r.customer_name,
+            customer_whatsapp_number=r.customer_whatsapp_number,
+            status=r.status,
+            handoff_status=r.handoff_status,
+            ai_enabled=r.ai_enabled,
+            started_at=r.started_at,
+            ended_at=r.ended_at,
+        )
+        for r in rows
+    ]
+
+    return conversation_schema.PaginatedConversationResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=math.ceil(total / page_size) if page_size > 0 else 0,
+    )

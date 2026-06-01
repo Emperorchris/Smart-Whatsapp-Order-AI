@@ -24,6 +24,11 @@ async def get_all_orders(db: DBSession):
     return await order_service.get_all_orders(db)
 
 
+@order_router.patch("/bulk/status", response_model=order_schema.BulkOrderStatusResponse)
+async def bulk_update_order_status(body: order_schema.BulkOrderStatusUpdate, db: DBSession):
+    return await order_service.bulk_update_order_status(db, body.order_ids, body.status)
+
+
 @order_router.get("/{order_id}", response_model=order_schema.OrderResponse)
 async def get_order(order_id: str, db: DBSession):
     return await order_service.get_order_by_id(db, order_id)

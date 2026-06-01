@@ -1,3 +1,4 @@
+import json
 from typing import Optional
 from decimal import Decimal
 from fastapi import APIRouter, Query, Form, UploadFile, File
@@ -18,14 +19,17 @@ async def create_product(
     category_id: Optional[str] = Form(None),
     is_active: bool = Form(True),
     is_live: bool = Form(False),
+    tags: Optional[str] = Form(None, description='JSON array of tags e.g. ["dress", "ankara", "clothes"]'),
     files: list[UploadFile] = File(default=[]),
 ):
+    parsed_tags = json.loads(tags) if tags else None
     product_data = product_schema.ProductSchema(
         name=name,
         price=price,
         description=description,
         sku=sku,
         category_id=category_id,
+        tags=parsed_tags,
         is_active=is_active,
     )
     return await product_service.create_product(db, product_data, files=files, is_live=is_live)
@@ -48,12 +52,13 @@ async def search_products(
     min_price: Optional[Decimal] = Query(None, description="Minimum price"),
     max_price: Optional[Decimal] = Query(None, description="Maximum price"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    tag: Optional[str] = Query(None, description="Search by tag"),
     skip: int = Query(0, ge=0, description="Number of products to skip"),
     limit: int = Query(50, ge=1, le=100, description="Max products to return"),
 ):
     return await product_service.search_products(
         db, name=name, category_id=category_id, min_price=min_price,
-        max_price=max_price, is_active=is_active, skip=skip, limit=limit,
+        max_price=max_price, is_active=is_active, tag=tag, skip=skip, limit=limit,
     )
 
 
@@ -78,14 +83,17 @@ async def update_product(
     category_id: Optional[str] = Form(None),
     is_active: bool = Form(True),
     is_live: bool = Form(False),
+    tags: Optional[str] = Form(None, description='JSON array of tags e.g. ["dress", "ankara", "clothes"]'),
     files: list[UploadFile] = File(default=[]),
 ):
+    parsed_tags = json.loads(tags) if tags else None
     product_data = product_schema.ProductSchema(
         name=name,
         price=price,
         description=description,
         sku=sku,
         category_id=category_id,
+        tags=parsed_tags,
         is_active=is_active,
     )
     return await product_service.update_product(db, product_id, product_data, files=files, is_live=is_live)

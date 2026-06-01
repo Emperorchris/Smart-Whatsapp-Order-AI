@@ -1,12 +1,24 @@
 from fastapi import FastAPI, Request, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from .core import Config
 from .core.exceptions import register_exception_handlers
 from .api.router import api_router
+from .api.endpoints.websocket_endpoints import ws_router
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
 register_exception_handlers(app)
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(ws_router)
 
 
 @app.get("/")

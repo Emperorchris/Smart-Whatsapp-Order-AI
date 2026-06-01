@@ -24,3 +24,25 @@ class ConversationResponse(ConversationSchema):
     ended_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ConversationListItem(BaseModel):
+    id: UUID
+    customer_id: UUID
+    customer_name: Optional[str] = None
+    customer_whatsapp_number: Optional[str] = None
+    status: str
+    handoff_status: Optional[str] = None
+    ai_enabled: bool
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PaginatedConversationResponse(BaseModel):
+    items: list[ConversationListItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

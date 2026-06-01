@@ -28,6 +28,11 @@ async def get_my_active_handoff(db: DBSession, current_staff: CurrentStaff):
     return await human_handoff_service.get_staff_active_handoff(db, str(current_staff.id))
 
 
+@handoff_router.get("/check/{conversation_id}")
+async def check_handoff_status(conversation_id: str, db: DBSession, current_staff: CurrentStaff):
+    return {"status": await human_handoff_service.check_handoff_status(db, conversation_id)}
+
+
 @handoff_router.get("/conversation/{conversation_id}", response_model=list[HumanHandOffResponse])
 async def get_handoffs_by_conversation(conversation_id: str, db: DBSession, current_staff: CurrentStaff):
     return await human_handoff_service.get_handoffs_by_conversation_id(db, conversation_id)

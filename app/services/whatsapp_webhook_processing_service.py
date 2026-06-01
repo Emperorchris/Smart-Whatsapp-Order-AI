@@ -14,6 +14,7 @@ from . import (
     customer_service,
     message_service,
     processed_webhook_service,
+    whatsapp_staff_webhook_service,
 )
 
 
@@ -162,6 +163,15 @@ async def ensure_not_duplicate_event(db: AsyncSession, message_sid: str) -> bool
 
 
 async def get_or_create_customer(db: AsyncSession, payload: IncomingWhatsAppPayload):
+    # Check if the sender is a staff member (using phone variant resolution
+    # for Nigerian formats: 070..., 234..., +234...) — staff should never be
+    # created as customers.
+    staff = await whatsapp_staff_webhook_service.get_staff_by_phone(
+        db, payload.sender_number
+    )
+    if staff:
+        return None
+
     try:
         return await customer_service.get_customer_by_whatsapp_number(
             db, payload.sender_number

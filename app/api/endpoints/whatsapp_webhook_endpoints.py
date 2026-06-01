@@ -74,24 +74,20 @@ async def whatsapp_webhook(db: DBSession, request: Request):
 
     logger.info("webhook: sender={} identified as {}", payload.sender_number, sender_type)
 
-    # 3. Handle staff messages — commands and active handoffs handled directly,
-    #    otherwise fall through to AI like a normal customer
+    # 3. Handle staff messages — staff should never be created as customers.
+    #    All staff processing (AI, handoff forwarding) happens inside
+    #    handle_staff_incoming_message. Run in background so Meta gets 200 fast.
     if sender_type == utils.MessageSenderType.STAFF.value:
-        result = await whatsapp_staff_webhook_service.handle_staff_incoming_message(
-            db,
-            payload.sender_number,
-            payload.body,
-            payload.message_sid,
-            interactive_id=payload.interactive_id,
+        asyncio.create_task(
+            _process_staff_message_background(payload)
         )
-        if result is None:
-            # No active handoff — let staff chat with AI, fall through to customer flow
-            logger.info("webhook: staff has no active handoff, routing to AI")
-        else:
-            return Response(content="OK", status_code=200)
+        return Response(content="OK", status_code=200)
 
-    # 4. Get or create customer
+    # 4. Get or create customer (returns None if sender is a staff member)
     customer = await whatsapp_webhook_processing_service.get_or_create_customer(db, payload)
+    if customer is None:
+        logger.info("webhook: sender {} is a staff member, skipping customer creation", payload.sender_number)
+        return Response(content="OK", status_code=200)
 
     # 5. Get or create active conversation
     active_conversation = (
@@ -106,6 +102,21 @@ async def whatsapp_webhook(db: DBSession, request: Request):
     )
 
     return Response(content="OK", status_code=200)
+
+
+async def _process_staff_message_background(payload):
+    """Process a staff message in the background with its own DB session."""
+    async with AsyncSessionLocal() as db:
+        try:
+            await whatsapp_staff_webhook_service.handle_staff_incoming_message(
+                db,
+                payload.sender_number,
+                payload.body,
+                payload.message_sid,
+                interactive_id=payload.interactive_id,
+            )
+        except Exception as exc:
+            logger.error("Background staff message processing failed: {}", exc)
 
 
 async def _process_message_background(payload, customer, active_conversation, sender_type=utils.MessageSenderType.CUSTOMER.value):

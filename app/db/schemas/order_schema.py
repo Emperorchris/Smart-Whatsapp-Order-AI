@@ -31,3 +31,14 @@ class OrderResponse(OrderSchema):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class BulkOrderStatusUpdate(BaseModel):
+    order_ids: list[UUID]
+    status: utils.OrderStatus
+
+
+class BulkOrderStatusResponse(BaseModel):
+    updated_count: int
+    failed_ids: list[UUID]
+    updated_orders: list[OrderResponse]

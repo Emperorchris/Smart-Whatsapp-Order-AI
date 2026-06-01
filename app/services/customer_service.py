@@ -22,6 +22,14 @@ async def create_customer(db: AsyncSession, customer_data: customers_schema.Cust
     return customers_schema.CustomerResponse.model_validate(new_customer)
 
 
+async def get_all_customers(db: AsyncSession, skip: int = 0, limit: int = 50) -> list[customers_schema.CustomerResponse]:
+    result = await db.execute(
+        select(customer_model.Customer).offset(skip).limit(limit)
+    )
+    customers = result.scalars().all()
+    return [customers_schema.CustomerResponse.model_validate(c) for c in customers]
+
+
 async def get_customer_by_id(db: AsyncSession, customer_id: str) -> customers_schema.CustomerResponse:
     result = await db.execute(
         select(customer_model.Customer).filter(customer_model.Customer.id == customer_id)

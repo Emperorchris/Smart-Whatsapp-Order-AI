@@ -52,6 +52,16 @@ async def get_cart_by_customer_id(db: AsyncSession, customer_id: str) -> cart_sc
     return cart_schema.CartResponse.model_validate(cart)
 
 
+async def get_carts_by_customer_id(db: AsyncSession, customer_id: str) -> list[cart_schema.CartResponse]:
+    result = await db.execute(
+        select(carts_model.Cart).filter(
+            carts_model.Cart.customer_id == customer_id,
+        )
+    )
+    carts = result.scalars().all()
+    return [cart_schema.CartResponse.model_validate(c) for c in carts]
+
+
 async def update_cart(db: AsyncSession, cart_id: str, cart_data: cart_schema.CartSchema) -> cart_schema.CartResponse:
     result = await db.execute(
         select(carts_model.Cart).filter(carts_model.Cart.id == cart_id)

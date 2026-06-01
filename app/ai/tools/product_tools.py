@@ -13,12 +13,15 @@ async def search_products(
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
     sku: Optional[str] = None,
+    tag: Optional[str] = None,
     skip: int = 0,
     limit: int = 10,
 ) -> str:
-    """Search for products in the store by name, description, price range, or SKU.
+    """Search for products in the store by name, description, price range, SKU, or tag.
     Use this when a customer asks about products, prices, availability, or wants to browse.
-    Use skip and limit for pagination. For example, skip=0 limit=10 for the first 10, skip=10 limit=10 for the next 10.
+    The tag parameter searches product tags for wider matching (e.g. "dress", "ankara", "gadget").
+    If searching by name returns no results, try searching by tag instead for broader matches.
+    Use skip and limit for pagination.
     Returns a formatted list of matching products with prices and variants."""
 
     db = config["configurable"]["db"]
@@ -30,9 +33,21 @@ async def search_products(
         min_price=min_price,
         max_price=max_price,
         sku=sku,
+        tag=tag,
         skip=skip,
         limit=limit,
     )
+
+    # If name search returned nothing, automatically try tag search as fallback
+    if not products and name and not tag:
+        products = await product_service.search_products(
+            db,
+            tag=name,
+            min_price=min_price,
+            max_price=max_price,
+            skip=skip,
+            limit=limit,
+        )
 
     if not products:
         return "No products found matching your search."
@@ -69,7 +84,7 @@ async def search_products(
 
         blocks.append(f"[PRODUCT_START]\n{line}\n[PRODUCT_END]")
 
-    result = "Here are the products we have:\n\n" + "\n\n".join(blocks)
+    result = "Here are the products we have:\n\n" + "\n\n".join(blocks) + "\n\nProducts sent. Stop calling tools and reply to the customer now."
     return result
 
 
@@ -115,7 +130,7 @@ async def get_product_details(config: RunnableConfig, product_name: str) -> str:
         if media:
             details += f"\n[PRODUCT_MEDIA]{media.url}[/PRODUCT_MEDIA]"
 
-    return f"[PRODUCT_START]\n{details}\n[PRODUCT_END]"
+    return f"[PRODUCT_START]\n{details}\n[PRODUCT_END]\nProduct details sent. Stop calling tools and reply to the customer now."
 
 
 async def _find_product(db, product_name: str):

@@ -24,3 +24,4 @@ class AgentState(TypedDict):
     handoff_reason: Optional[str] #if handoff is triggered, the reason for it
     response: Optional[str]
     sender_type: Optional[str]  # "customer" or "staff"
+    staff_id: Optional[str]

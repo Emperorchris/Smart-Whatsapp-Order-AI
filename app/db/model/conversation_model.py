@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy import Column, String, DateTime, ForeignKey, Uuid, Boolean
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Uuid, Boolean, Integer
 from sqlalchemy.orm import relationship
 from ..base import Base
 from ...core import utils
@@ -28,5 +28,7 @@ class Conversation(Base):
     ended_at = Column(DateTime, nullable=True)
     handoff_started_at = Column(DateTime, nullable=True)
     handoff_ended_at = Column(DateTime, nullable=True)
+    summary = Column(Text, nullable=True)  # Compressed summary of older messages
+    summary_message_count = Column(Integer, nullable=True, default=0)  # How many messages the summary covers
     human_hand_offs = relationship(
         "HumanHandOff", back_populates="conversation", foreign_keys="HumanHandOff.conversation_id", lazy="selectin")

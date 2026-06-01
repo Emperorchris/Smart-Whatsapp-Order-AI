@@ -3,7 +3,7 @@ from decimal import Decimal
 import random
 import string
 
-from sqlalchemy import select
+from sqlalchemy import select, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 import cloudinary.uploader
 
@@ -72,6 +72,7 @@ async def create_product(db: AsyncSession, product_data: product_schema.ProductS
         sku=product_data.sku,
         category_id=product_data.category_id,
         media=media,
+        tags=product_data.tags,
         is_active=product_data.is_active
     )
 
@@ -152,6 +153,7 @@ async def update_product(db: AsyncSession, product_id: str, product_data: produc
     product.sku = product_data.sku
     product.category_id = product_data.category_id
     product.media = media
+    product.tags = product_data.tags
     product.is_active = product_data.is_active
 
     await db.commit()
@@ -169,6 +171,7 @@ async def search_products(
     max_price: Optional[Decimal] = None,
     is_active: Optional[bool] = None,
     sku: Optional[str] = None,
+    tag: Optional[str] = None,
     skip: int = 0,
     limit: int = 50,
 ) -> list[product_schema.ProductResponse]:
@@ -188,6 +191,10 @@ async def search_products(
         query = query.filter(product_model.Product.sku == sku)
     if description:
         query = query.filter(product_model.Product.description.ilike(f"%{description}%"))
+    if tag:
+        query = query.filter(
+            cast(product_model.Product.tags, String).ilike(f"%{tag}%")
+        )
 
     result = await db.execute(query.offset(skip).limit(limit))
     products = result.scalars().all()

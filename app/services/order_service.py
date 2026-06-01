@@ -210,3 +210,38 @@ async def delete_order(db: AsyncSession, order_id: str):
 
     await db.delete(order)
     await db.commit()
+
+
+TERMINAL_STATUSES = {utils.OrderStatus.CANCELLED.value, utils.OrderStatus.DELIVERED.value}
+
+
+async def bulk_update_order_status(
+    db: AsyncSession,
+    order_ids: list,
+    new_status: utils.OrderStatus,
+) -> order_schema.BulkOrderStatusResponse:
+    result = await db.execute(
+        select(order_model.Order).filter(order_model.Order.id.in_(order_ids))
+    )
+    orders = list(result.scalars().all())
+
+    found_ids = {o.id for o in orders}
+    failed_ids = [oid for oid in order_ids if oid not in found_ids]
+
+    updated = []
+    for order in orders:
+        if order.status in TERMINAL_STATUSES:
+            failed_ids.append(order.id)
+            continue
+        order.status = new_status.value
+        updated.append(order)
+
+    await db.commit()
+    for o in updated:
+        await db.refresh(o)
+
+    return order_schema.BulkOrderStatusResponse(
+        updated_count=len(updated),
+        failed_ids=failed_ids,
+        updated_orders=[order_schema.OrderResponse.model_validate(o) for o in updated],
+    )

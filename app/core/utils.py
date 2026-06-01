@@ -73,6 +73,8 @@ class PaymentStatus(enum.Enum):
     PENDING = "pending"
     COMPLETED = "completed"
     FAILED = "failed"
+    FULL_REFUND = "full_refund"
+    PARTIAL_REFUND = "partial_refund"
 
 
 class PaymentMethod(enum.Enum):
@@ -126,9 +128,13 @@ class StaffConversationCommand(enum.Enum):
     QUEUE = "#queue"
     SKIP = "#skip"
     INFO = "#info"
-    
-    
-    
+
+
+class StaffChatMode(enum.Enum):
+    AI = "ai"
+    CUSTOMER = "customer"
+
+
 class GraphNodeName(enum.Enum):
     CART_NODE = "cart_node"
     CUSTOMER_NODE = "customer_node"
@@ -141,11 +147,13 @@ class GraphNodeName(enum.Enum):
     
     
 class IntentName(enum.Enum):
-    PRODUCT_INQUIRY = "product_inquiry"
+    PRODUCT_BROWSE = "product_browse"
     CART = "cart"
+    CHECKOUT = "checkout"
     ORDER = "order"
+    ADDRESS = "address"
     HANDOFF = "handoff"
-    CHITCHAT = "chitchat"
+    UNKNOWN = "unknown"
 
 
 

@@ -20,6 +20,7 @@ class ProductSchema(BaseModel):
     # live_image_urls: Optional[List[str]] = None
     # video_urls: Optional[List[str]] = None
     # live_video_urls: Optional[List[str]] = None
+    tags: Optional[list[str]] = None
     is_active: bool = True
     
     
@@ -32,12 +33,14 @@ class ProductSearchParams(BaseModel):
     min_price: Optional[Decimal] = None
     max_price: Optional[Decimal] = None
     is_active: Optional[bool] = None
+    tag: Optional[str] = None
 
 
 class ProductResponse(ProductSchema):
     id: UUID
     tracking_id: str
     media: Optional[list[MediaItem]] = None
+    tags: Optional[list[str]] = None
     created_at: datetime
     updated_at: datetime
 

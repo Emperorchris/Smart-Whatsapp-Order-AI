@@ -21,6 +21,7 @@ class Product(Base):
     # live_video_urls = Column(JSON, nullable=True)  # List of live video URLs (e.g., from a live stream)
 
     media = Column(JSON, nullable=True)  # List of {"url": "...", "type": "image|video|live_image|live_video"}
+    tags = Column(JSON, nullable=True)  # List of search tags e.g. ["dress", "ankara", "clothes"]
 
     is_active = Column(Boolean, default=True)
 

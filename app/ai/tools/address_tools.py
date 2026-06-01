@@ -37,11 +37,12 @@ async def save_delivery_address(
     )
 
     return (
-        f"Address saved!\n\n"
+        f"Address saved! address_id={address.id}\n\n"
         f"• {address.address_line}\n"
         f"• {address.city}, {address.state}\n"
         + (f"• Landmark: {address.landmark}\n" if address.landmark else "")
-        + f"• Label: {address.label}"
+        + f"• Label: {address.label}\n\n"
+        + f"Now call place_order with customer_address_id=\"{address.id}\" to complete the order."
     )
 
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from ...core.dependencies import DBSession
 from ...services import customer_service
 from ...db.schemas import customers_schema
@@ -9,6 +9,15 @@ customer_router = APIRouter(prefix="/customers", tags=["Customers"])
 @customer_router.post("/", response_model=customers_schema.CustomerResponse)
 async def create_customer(customer_data: customers_schema.CustomerSchema, db: DBSession):
     return await customer_service.create_customer(db, customer_data)
+
+
+@customer_router.get("/", response_model=list[customers_schema.CustomerResponse])
+async def get_all_customers(
+    db: DBSession,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+):
+    return await customer_service.get_all_customers(db, skip=skip, limit=limit)
 
 
 @customer_router.get("/{customer_id}", response_model=customers_schema.CustomerResponse)

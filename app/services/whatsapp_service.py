@@ -1,7 +1,7 @@
-import logging
 from typing import Any
 
 import httpx
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,8 +9,6 @@ from ..core import exceptions
 from ..core.config import Config
 from ..core import utils
 from ..db.model import customer_model, staff_model
-
-logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────
 # Meta WhatsApp Cloud API implementation
@@ -52,7 +50,9 @@ def _normalize_phone(number: str) -> str:
     return value
 
 
-async def send_message(to: str, body: str, media_urls: list[str] | None = None) -> dict[str, Any]:
+async def send_message(
+    to: str, body: str, media_urls: list[str] | None = None
+) -> dict[str, Any]:
     if not body or not body.strip():
         raise exceptions.BadRequestException("Message body cannot be empty.")
 
@@ -74,7 +74,9 @@ async def send_message(to: str, body: str, media_urls: list[str] | None = None) 
                 },
             }
             try:
-                resp = await _http_client.post(META_API_BASE, headers=headers, json=media_payload)
+                resp = await _http_client.post(
+                    META_API_BASE, headers=headers, json=media_payload
+                )
                 resp.raise_for_status()
                 data = resp.json()
                 msg_id = data.get("messages", [{}])[0].get("id")
@@ -92,7 +94,9 @@ async def send_message(to: str, body: str, media_urls: list[str] | None = None) 
     }
 
     try:
-        resp = await _http_client.post(META_API_BASE, headers=headers, json=text_payload)
+        resp = await _http_client.post(
+            META_API_BASE, headers=headers, json=text_payload
+        )
         resp.raise_for_status()
         data = resp.json()
     except httpx.HTTPError as exc:
@@ -111,7 +115,9 @@ async def send_message(to: str, body: str, media_urls: list[str] | None = None) 
     }
 
 
-async def send_product_message(to: str, caption: str, media_urls: list[str]) -> dict[str, Any]:
+async def send_product_message(
+    to: str, caption: str, media_urls: list[str]
+) -> dict[str, Any]:
     """Send product media with caption.
     - Single media: sends as image/video with caption attached (one neat bubble).
     - Multiple media: sends all plain first, then caption as separate text."""
@@ -153,7 +159,9 @@ async def send_product_message(to: str, caption: str, media_urls: list[str]) -> 
                 media_type: {"link": url},
             }
             try:
-                resp = await _http_client.post(META_API_BASE, headers=headers, json=payload)
+                resp = await _http_client.post(
+                    META_API_BASE, headers=headers, json=payload
+                )
                 resp.raise_for_status()
                 data = resp.json()
                 msg_id = data.get("messages", [{}])[0].get("id")
@@ -170,7 +178,9 @@ async def send_product_message(to: str, caption: str, media_urls: list[str]) -> 
                 "text": {"body": caption.strip()},
             }
             try:
-                resp = await _http_client.post(META_API_BASE, headers=headers, json=text_payload)
+                resp = await _http_client.post(
+                    META_API_BASE, headers=headers, json=text_payload
+                )
                 resp.raise_for_status()
                 data = resp.json()
                 msg_id = data.get("messages", [{}])[0].get("id")
@@ -217,12 +227,21 @@ async def send_interactive_buttons(
         payload["interactive"]["footer"] = {"text": footer}
 
     try:
+        logger.info(
+            "send_interactive_buttons: POST to {} for phone {}", META_API_BASE, phone
+        )
+        logger.debug("send_interactive_buttons: payload={}", payload)
         resp = await _http_client.post(META_API_BASE, headers=headers, json=payload)
+        logger.info(
+            "send_interactive_buttons: HTTP {} response={}", resp.status_code, resp.text
+        )
         resp.raise_for_status()
         data = resp.json()
     except httpx.HTTPError as exc:
-        logger.error("Failed to send interactive buttons: %s", exc)
-        raise exceptions.BadRequestException("Failed to send interactive message.", error_detail=str(exc))
+        logger.error("send_interactive_buttons: FAILED for {}: {}", phone, exc)
+        raise exceptions.BadRequestException(
+            "Failed to send interactive message.", error_detail=str(exc)
+        )
 
     message_id = data.get("messages", [{}])[0].get("id")
     return {"message_id": message_id, "status": "sent", "to": phone}
@@ -267,7 +286,9 @@ async def send_interactive_list(
         data = resp.json()
     except httpx.HTTPError as exc:
         logger.error("Failed to send interactive list: %s", exc)
-        raise exceptions.BadRequestException("Failed to send interactive message.", error_detail=str(exc))
+        raise exceptions.BadRequestException(
+            "Failed to send interactive message.", error_detail=str(exc)
+        )
 
     message_id = data.get("messages", [{}])[0].get("id")
     return {"message_id": message_id, "status": "sent", "to": phone}
@@ -294,9 +315,13 @@ async def identify_staff_by_phone(db: AsyncSession, phone: str):
         phone_variants.update({local, "0" + local, "+234" + local})
     elif phone_value.startswith("0") and len(phone_value) >= 10:
         without_zero = phone_value[1:]
-        phone_variants.update({without_zero, "234" + without_zero, "+234" + without_zero})
+        phone_variants.update(
+            {without_zero, "234" + without_zero, "+234" + without_zero}
+        )
     elif len(phone_value) >= 9:
-        phone_variants.update({"0" + phone_value, "234" + phone_value, "+234" + phone_value})
+        phone_variants.update(
+            {"0" + phone_value, "234" + phone_value, "+234" + phone_value}
+        )
 
     result = await db.execute(
         select(staff_model.Staff).filter(
@@ -323,13 +348,13 @@ async def identify_sender(phone: str, db: AsyncSession) -> str:
     if phone_value.startswith("234") and len(phone_value) > 10:
         local = phone_value[3:]
         phone_variants.add(local)
-        phone_variants.add("0" + local) 
+        phone_variants.add("0" + local)
         phone_variants.add("+234" + local)
     elif phone_value.startswith("0") and len(phone_value) >= 10:
         without_zero = phone_value[1:]
         phone_variants.add(without_zero)
-        phone_variants.add("234" + without_zero) 
-        phone_variants.add("+234" + without_zero) 
+        phone_variants.add("234" + without_zero)
+        phone_variants.add("+234" + without_zero)
     elif len(phone_value) >= 9:
         phone_variants.add("0" + phone_value)
         phone_variants.add("234" + phone_value)
@@ -356,10 +381,17 @@ async def identify_sender(phone: str, db: AsyncSession) -> str:
     if customer:
         return utils.MessageSenderType.CUSTOMER.value
 
-    raise exceptions.NotFoundException("Sender is not a registered customer or staff member.")
+    raise exceptions.NotFoundException(
+        "Sender is not a registered customer or staff member."
+    )
 
 
-async def notify_all_staff(db: AsyncSession, message: str, customer_id: str | None = None) -> dict[str, Any]:
+async def notify_all_staff(
+    db: AsyncSession,
+    message: str,
+    customer_id: str | None = None,
+    handoff_id: str | None = None,
+) -> dict[str, Any]:
     if not message or not message.strip():
         raise exceptions.BadRequestException("Notification message cannot be empty.")
 
@@ -389,17 +421,67 @@ async def notify_all_staff(db: AsyncSession, message: str, customer_id: str | No
         )
     )
     recipients = result.scalars().all()
+    logger.info(
+        "notify_all_staff: found {} active staff with whatsapp numbers", len(recipients)
+    )
+    for r in recipients:
+        logger.info(
+            "notify_all_staff: staff '{}' → raw number '{}'", r.name, r.whatsapp_number
+        )
 
     sent_count = 0
     failed: list[dict[str, str]] = []
 
     for member in recipients:
         try:
-            await send_message(to=member.whatsapp_number, body=full_message)
+            normalized = _normalize_phone(member.whatsapp_number)
+            logger.info(
+                "notify_all_staff: sending to '{}' (normalized: '{}')",
+                member.whatsapp_number,
+                normalized,
+            )
+            if handoff_id:
+                handoff_short_id = str(handoff_id)[:8]
+                resp = await send_interactive_buttons(
+                    to=member.whatsapp_number,
+                    body=full_message,
+                    buttons=[
+                        {
+                            "id": f"claim_cust_{handoff_short_id}",
+                            "title": "Claim → Customer",
+                        },
+                        {"id": f"claim_ai_{handoff_short_id}", "title": "Claim → AI"},
+                    ],
+                    header="New Handoff Request",
+                )
+                logger.info(
+                    "notify_all_staff: interactive buttons sent to '{}', response: {}",
+                    normalized,
+                    resp,
+                )
+            else:
+                resp = await send_message(to=member.whatsapp_number, body=full_message)
+                logger.info(
+                    "notify_all_staff: message sent to '{}', response: {}",
+                    normalized,
+                    resp,
+                )
             sent_count += 1
         except Exception as exc:
-            failed.append({"staff_id": str(member.id), "staff_name": member.name, "error": str(exc)})
+            logger.error(
+                "notify_all_staff: FAILED to send to '{}': {}",
+                member.whatsapp_number,
+                exc,
+            )
+            failed.append(
+                {
+                    "staff_id": str(member.id),
+                    "staff_name": member.name,
+                    "error": str(exc),
+                }
+            )
 
+    logger.info("notify_all_staff: done — sent={}, failed={}", sent_count, len(failed))
     return {
         "total_recipients": len(recipients),
         "sent_count": sent_count,

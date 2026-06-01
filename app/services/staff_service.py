@@ -10,6 +10,19 @@ from ..core import exceptions
 pwd_context = PasswordHash([Argon2Hasher()])
 
 
+def _normalize_whatsapp_number(number: str | None) -> str | None:
+    """Normalize WhatsApp number to international format (no + prefix).
+    Handles: +234..., 234..., 0803..., 803..."""
+    if not number:
+        return number
+    value = number.strip().lstrip("+")
+    if value.startswith("0") and len(value) >= 10:
+        value = "234" + value[1:]
+    elif not value.startswith("234") and len(value) >= 9:
+        value = "234" + value
+    return value
+
+
 def _hash_password(plain_password: str) -> str:
     return pwd_context.hash(plain_password)
 
@@ -29,7 +42,7 @@ async def create_staff(db: AsyncSession, data: staff_schema.StaffCreate) -> staf
         name=data.name,
         email=data.email,
         phone_number=data.phone_number,
-        whatsapp_number=data.whatsapp_number,
+        whatsapp_number=_normalize_whatsapp_number(data.whatsapp_number),
         role=data.role,
         password_hash=_hash_password(data.password),
     )
@@ -80,7 +93,10 @@ async def update_staff(db: AsyncSession, staff_id: str, data: staff_schema.Staff
         if dup_result.scalars().first():
             raise exceptions.ConflictException("Email is already in use by another staff member.")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    update_data = data.model_dump(exclude_unset=True)
+    if "whatsapp_number" in update_data:
+        update_data["whatsapp_number"] = _normalize_whatsapp_number(update_data["whatsapp_number"])
+    for field, value in update_data.items():
         setattr(staff, field, value)
 
     await db.commit()
