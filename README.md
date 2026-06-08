@@ -43,37 +43,18 @@
 When the AI can't handle a request, it seamlessly hands off the conversation to a human staff member. The platform includes a full admin dashboard API with analytics, broadcasting, customer segmentation, and audit logging.
 
 <!-- Replace with your actual demo screenshot -->
-<!-- ![Dashboard Screenshot](docs/images/dashboard-screenshot.png) -->
-
 ---
 
 ## Demo
 
 ### Customer Shopping Experience
 
-<!-- Replace with your actual demo video/gif -->
-<!-- ![Customer Demo](docs/videos/customer-demo.gif) -->
+[![Watch Demo Video](docs/images/demo-thumbnail.png)](https://drive.google.com/file/d/11jpOHbVX29yQsNsACmzgW3fj7omfF94N/view?usp=sharing)
+
+> *Click the image above to watch the full demo video*
 
 > *Customer browsing products, adding to cart, and placing an order — all through WhatsApp.*
 
-| Step | Screenshot |
-|------|-----------|
-| **Product Browsing** | <!-- ![Browse](docs/images/browse.png) --> *Add screenshot* |
-| **Cart Management** | <!-- ![Cart](docs/images/cart.png) --> *Add screenshot* |
-| **Checkout & Payment** | <!-- ![Checkout](docs/images/checkout.png) --> *Add screenshot* |
-| **Order Tracking** | <!-- ![Tracking](docs/images/tracking.png) --> *Add screenshot* |
-
-### Human Handoff
-
-<!-- ![Handoff Demo](docs/videos/handoff-demo.gif) -->
-
-> *AI detects customer frustration and seamlessly transfers to a human agent.*
-
-### Admin Dashboard
-
-<!-- ![Admin Dashboard](docs/images/admin-dashboard.png) -->
-
-> *Analytics, order management, and real-time notifications.*
 
 ---
 
@@ -350,11 +331,7 @@ alembic upgrade head
 ### Running the Application
 
 ```bash
-# Development
-uvicorn app.main:app --reload --port 8000
-
-# Production
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+fastapi dev
 ```
 
 The API will be available at `http://localhost:8000`. Visit `http://localhost:8000/docs` for the interactive Swagger documentation.
@@ -386,9 +363,6 @@ ngrok http 8000
 
 Meta will send a GET request to verify your endpoint. The platform handles this automatically.
 
-<!-- ![Webhook Setup](docs/images/webhook-setup.png) -->
-
-> *Meta Developer Console webhook configuration.*
 
 ---
 
@@ -721,7 +695,7 @@ Once the server is running, access the auto-generated docs:
 - **Swagger UI**: `http://localhost:8000/docs`
 - **ReDoc**: `http://localhost:8000/redoc`
 
-<!-- ![Swagger UI](docs/images/swagger-ui.png) -->
+![Swagger UI](docs/images/swagger-ui.png)
 
 ---
 
