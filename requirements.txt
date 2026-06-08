@@ -41,3 +41,4 @@ twilio
 python-dateutil
 pytz
 loguru
+slowapi

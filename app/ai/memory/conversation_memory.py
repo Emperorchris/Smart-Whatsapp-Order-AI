@@ -1,4 +1,5 @@
 import uuid as uuid_mod
+from loguru import logger
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from langchain_core.messages import (
@@ -57,14 +58,20 @@ async def load_conversation_history(
     # If we have enough messages and no summary yet (or summary is stale), generate one
     older_unsummarized = total_messages - len(rows)
     if older_unsummarized > 0 and older_unsummarized > summary_count:
-        await _generate_summary(db, conversation_id, total_messages - len(rows))
+        try:
+            await _generate_summary(db, conversation_id, total_messages - len(rows))
 
-        # Reload the summary
-        conv_result = await db.execute(
-            select(Conversation).filter(Conversation.id == conversation_id)
-        )
-        conversation = conv_result.scalars().first()
-        summary = conversation.summary if conversation else None
+            # Reload the summary
+            conv_result = await db.execute(
+                select(Conversation).filter(Conversation.id == conversation_id)
+            )
+            conversation = conv_result.scalars().first()
+            summary = conversation.summary if conversation else None
+        except Exception:
+            logger.opt(exception=True).warning(
+                "conversation_memory: summarization failed for conversation={}, skipping",
+                conversation_id,
+            )
 
     # Build message list
     messages: list[AnyMessage] = []

@@ -1,7 +1,8 @@
+import traceback
+from loguru import logger
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-import traceback
 
 
 # Custom exceptions
@@ -80,7 +81,7 @@ def register_exception_handlers(app: FastAPI):
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         tb = traceback.format_exc()
-        print(f"HTTP error: {exc.status_code} - {exc.detail}\n{tb}")
+        logger.error("HTTP error: {} - {}\n{}", exc.status_code, exc.detail, tb)
         if hasattr(exc, "to_dict"):
             content = exc.to_dict()
         else:
@@ -103,7 +104,7 @@ def register_exception_handlers(app: FastAPI):
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
         tb = traceback.format_exc()
-        print(f"Unhandled error: {type(exc).__name__}: {exc}\n{tb}")
+        logger.error("Unhandled error: {}: {}\n{}", type(exc).__name__, exc, tb)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=InternalServerException(

@@ -1,11 +1,12 @@
+from loguru import logger as _log
 from sqlalchemy import select
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from ...services import human_handoff_service, conversation_service, whatsapp_service, customer_service, staff_service
+from ...services import human_handoff_service, conversation_service, whatsapp_service, customer_service, staff_service, websocket_service
 from ...db.schemas import human_hand_off_schema
 from ...db.model.message_model import Message
 from ...db.model import human_hand_off_model
-from ...core.utils import HandOffStatus, HandOffTriggeredBy, MessageSenderType, StaffChatMode
+from ...core.utils import HandOffStatus, HandOffTriggeredBy, MessageSenderType, StaffChatMode, WebSocketEvent
 from ...services.whatsapp_staff_webhook_service import set_staff_mode, clear_staff_mode, _get_staff_mode
 
 
@@ -35,6 +36,21 @@ async def request_human_agent(
 
         handoff = await human_handoff_service.create_handoff(db, handoff_data)
         await conversation_service.start_handoff(db, conversation_id, reason=reason)
+
+        # Broadcast new handoff request to dashboard
+        try:
+            await websocket_service.broadcast(
+                WebSocketEvent.NEW_HANDOFF.value,
+                {
+                    "handoff_id": str(handoff.id),
+                    "conversation_id": str(conversation_id),
+                    "customer_id": str(customer_id),
+                    "handoff_status": HandOffStatus.PENDING.value,
+                    "reason": reason,
+                },
+            )
+        except Exception:
+            pass
 
         await whatsapp_service.notify_all_staff(
             db=db,
@@ -130,8 +146,7 @@ async def confirm_resolve_handoff(config: RunnableConfig) -> str:
         )
         return "Confirmation buttons sent. Tap the button to confirm."
     except Exception as exc:
-        from loguru import logger
-        logger.error("confirm_resolve_handoff: failed to send buttons — {}", exc)
+        _log.error("confirm_resolve_handoff: failed to send buttons — {}", exc)
         return "I couldn't send the confirmation buttons. Reply '#yes' to close the handoff or '#no' to keep it."
 
 
@@ -174,6 +189,20 @@ async def resolve_handoff_request(config: RunnableConfig) -> str:
     await conversation_service.resume_ai(
         db, conversation_id, handoff_status=HandOffStatus.RESOLVED
     )
+
+    # Broadcast handoff resolved to dashboard
+    try:
+        await websocket_service.broadcast(
+            WebSocketEvent.HANDOFF_RESOLVED.value,
+            {
+                "handoff_id": str(active_handoff.id),
+                "conversation_id": str(conversation_id),
+                "resolved_by": "staff",
+                "handoff_status": HandOffStatus.RESOLVED.value,
+            },
+        )
+    except Exception:
+        pass
 
     # Notify the customer that AI is back
     try:
@@ -220,8 +249,6 @@ async def claim_next_handoff(config: RunnableConfig) -> str:
     db = config["configurable"]["db"]
     staff_id_from_config = config["configurable"].get("staff_id")
 
-    from loguru import logger as _logger
-
     # Resolve staff member — prefer staff_id from config, fall back to customer phone lookup
     staff = None
     if staff_id_from_config:
@@ -240,12 +267,27 @@ async def claim_next_handoff(config: RunnableConfig) -> str:
     if not staff:
         return "This command is only available for staff members."
 
-    _logger.info("claim_next_handoff: staff_id={}, attempting to claim", staff.id)
+    _log.info("claim_next_handoff: staff_id={}, attempting to claim", staff.id)
 
     try:
         handoff = await human_handoff_service.claim_next_pending_handoff(db, str(staff.id))
-        _logger.info("claim_next_handoff: claimed handoff_id={}, conversation_id={}", handoff.id, handoff.conversation_id)
+        _log.info("claim_next_handoff: claimed handoff_id={}, conversation_id={}", handoff.id, handoff.conversation_id)
         await conversation_service.activate_handoff_for_staff(db, str(handoff.conversation_id), str(staff.id))
+
+        # Broadcast handoff claimed to dashboard
+        try:
+            await websocket_service.broadcast(
+                WebSocketEvent.HANDOFF_CLAIMED.value,
+                {
+                    "handoff_id": str(handoff.id),
+                    "conversation_id": str(handoff.conversation_id),
+                    "assigned_staff_id": str(staff.id),
+                    "staff_name": staff.name,
+                    "handoff_status": HandOffStatus.ACTIVE.value,
+                },
+            )
+        except Exception:
+            pass
 
         # Set staff to AI mode and send [Talk to Customer] button
         set_staff_mode(str(staff.id), StaffChatMode.AI.value)
@@ -291,7 +333,7 @@ async def claim_next_handoff(config: RunnableConfig) -> str:
             f"You're in *AI Mode*. Review the customer's details, then tap *Talk to Customer* when ready."
         )
     except Exception as exc:
-        _logger.error("claim_next_handoff: FAILED — {}", exc)
+        _log.error("claim_next_handoff: FAILED — {}", exc)
         error_msg = str(exc)
         if ": " in error_msg:
             error_msg = error_msg.split(": ", 1)[1]
@@ -360,20 +402,32 @@ async def get_pending_handoffs(config: RunnableConfig) -> str:
                     header="Pending Handoff",
                 )
             except Exception as exc:
-                from loguru import logger as _log
                 _log.error("get_pending_handoffs: failed to send buttons for handoff {} — {}", h.id, exc)
 
     return f"Sent *{len(handoffs)}* pending handoff(s) with action buttons."
 
 
+_STATUS_EMOJI = {
+    "pending": "🕐",
+    "requested": "🕐",
+    "active": "🟢",
+    "resolved": "✅",
+    "cancelled": "❌",
+}
+_HISTORY_PAGE_SIZE = 10
+
+
 @tool
-async def get_all_handoffs(config: RunnableConfig, status: str = "") -> str:
-    """View all handoff records with optional status filter.
-    Use this when the admin asks for a full overview of all handoffs, handoff history, or wants to see everything.
+async def get_all_handoffs(config: RunnableConfig, status: str = "", page: int = 1) -> str:
+    """View all handoff records with optional status filter and pagination.
+    Pending/active handoffs are sent as interactive buttons.
+    Resolved/cancelled ones are shown as a formatted paginated list (5 per page, newest first).
     Args:
-        status: Optional filter — "pending", "active", "resolved", "cancelled", or empty for all."""
+        status: Optional filter — "pending", "active", "resolved", "cancelled", or empty for all.
+        page: Page number for the resolved/cancelled history (default 1)."""
 
     db = config["configurable"]["db"]
+    staff_id = config["configurable"].get("staff_id")
 
     filter_status = status.strip().lower() if status else None
     handoffs = await human_handoff_service.get_all_handoffs(db, status=filter_status)
@@ -382,7 +436,22 @@ async def get_all_handoffs(config: RunnableConfig, status: str = "") -> str:
         label = f"No {filter_status} handoffs found." if filter_status else "No handoff records found."
         return label
 
-    lines = []
+    # Sort newest first
+    handoffs = sorted(handoffs, key=lambda h: h.requested_at or h.id, reverse=True)
+
+    # Resolve staff phone for interactive cards
+    staff_phone = None
+    if staff_id:
+        try:
+            staff_record = await staff_service.get_staff_by_id(db, staff_id)
+            staff_phone = staff_record.whatsapp_number
+        except Exception:
+            pass
+
+    actionable_statuses = {HandOffStatus.PENDING.value, HandOffStatus.REQUESTED.value, HandOffStatus.ACTIVE.value}
+    interactive_sent = 0
+    history_entries = []
+
     for h in handoffs:
         try:
             conv = await conversation_service.get_conversation_by_id(db, str(h.conversation_id))
@@ -396,21 +465,97 @@ async def get_all_handoffs(config: RunnableConfig, status: str = "") -> str:
         staff_name = "Unassigned"
         if h.assigned_staff_id:
             try:
-                staff_record = await staff_service.get_staff_by_id(db, str(h.assigned_staff_id))
-                staff_name = staff_record.name
+                sr = await staff_service.get_staff_by_id(db, str(h.assigned_staff_id))
+                staff_name = sr.name
             except Exception:
                 staff_name = "Unknown"
 
-        lines.append(
-            f"• *{name}* ({phone})\n"
-            f"  Status: *{h.status}*\n"
-            f"  Assigned to: {staff_name}\n"
-            f"  Reason: {h.reason or 'Not specified'}\n"
-            f"  Requested: {h.requested_at.strftime('%d-%m-%Y %H:%M') if h.requested_at else 'N/A'}"
-        )
+        emoji = _STATUS_EMOJI.get(h.status, "•")
+        requested = h.requested_at.strftime("%d %b %Y, %I:%M %p") if h.requested_at else "N/A"
 
-    header = f"*{len(handoffs)}* {filter_status or ''} handoff(s)".strip() + " (most recent):"
-    return header + "\n\n" + "\n\n".join(lines)
+        if h.status in actionable_statuses and staff_phone:
+            body = (
+                f"*{name}*\n"
+                f"{phone}\n\n"
+                f"{emoji} Status: *{h.status.capitalize()}*\n"
+                f"Assigned to: {staff_name}\n"
+                f"Reason: {h.reason or 'Not specified'}\n"
+                f"Requested: {requested}"
+            )
+            handoff_short_id = str(h.id)[:8]
+            try:
+                await whatsapp_service.send_interactive_buttons(
+                    to=staff_phone,
+                    body=body,
+                    buttons=[
+                        {"id": f"claim_cust_{handoff_short_id}", "title": "Claim → Customer"},
+                        {"id": f"claim_ai_{handoff_short_id}", "title": "Claim → AI"},
+                    ],
+                    header=f"{emoji} {h.status.capitalize()} Handoff",
+                )
+                interactive_sent += 1
+            except Exception as exc:
+                _log.error("get_all_handoffs: failed to send buttons for {} — {}", h.id, exc)
+        else:
+            history_entries.append((h, name, phone, staff_name, emoji, requested))
+
+    # Paginate resolved/cancelled history
+    total_history = len(history_entries)
+    page = max(1, page)
+    start = (page - 1) * _HISTORY_PAGE_SIZE
+    end = start + _HISTORY_PAGE_SIZE
+    page_entries = history_entries[start:end]
+    total_pages = (total_history + _HISTORY_PAGE_SIZE - 1) // _HISTORY_PAGE_SIZE
+
+    parts = []
+    if interactive_sent:
+        parts.append(f"[INTERACTIVE_SENT] Sent *{interactive_sent}* actionable handoff card(s) above.")
+
+    if page_entries and staff_phone:
+        lines = []
+        for h, name, phone, staff_name, emoji, requested in page_entries:
+            lines.append(
+                f"{emoji} *{name}* ({phone})\n"
+                f"   Status: *{h.status.capitalize()}*  •  {staff_name}\n"
+                f"   _{h.reason or 'No reason'}_\n"
+                f"   {requested}"
+            )
+
+        header_line = (
+            f"*History — Page {page}/{total_pages}* "
+            f"({total_history} record{'s' if total_history != 1 else ''})"
+        )
+        history_text = header_line + "\n\n" + "\n\n".join(lines)
+
+        # Send as a WhatsApp message (text) with optional "Next Page" button
+        if total_pages > 1:
+            remaining = total_history - end
+            try:
+                btn_body = history_text[:1000] if len(history_text) > 1000 else history_text
+                buttons = []
+                if page < total_pages:
+                    buttons.append({"id": f"handoffs_page_{page + 1}", "title": f"Next {min(remaining, _HISTORY_PAGE_SIZE)} →"})
+                if page > 1:
+                    buttons.append({"id": f"handoffs_page_{page - 1}", "title": "← Previous"})
+                if buttons:
+                    await whatsapp_service.send_interactive_buttons(
+                        to=staff_phone,
+                        body=btn_body,
+                        buttons=buttons,
+                        header=f"History • Page {page}/{total_pages}",
+                        footer=f"{remaining} more" if remaining > 0 else "Last page",
+                    )
+                    parts.append(f"[INTERACTIVE_SENT] History page {page}/{total_pages} sent.")
+            except Exception as exc:
+                _log.error("get_all_handoffs: failed to send history page — {}", exc)
+                parts.append(history_text)
+        else:
+            # Single page — just return as text
+            parts.append(history_text)
+    elif not interactive_sent:
+        parts.append("No handoffs found.")
+
+    return "\n\n".join(parts)
 
 
 @tool

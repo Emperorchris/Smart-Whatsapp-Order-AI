@@ -16,6 +16,7 @@ _connections: dict[str, WebSocket] = {}
 
 
 async def connect(ws: WebSocket, client_id: str):
+    """Accept a WebSocket connection and register the client."""
     await ws.accept()
     _connections[client_id] = ws
 
@@ -25,6 +26,7 @@ def disconnect(client_id: str):
 
 
 async def broadcast(event: str, data: dict):
+    """Send an event payload to all connected WebSocket clients."""
     payload = json.dumps({
         "event": event,
         "data": data,
@@ -41,6 +43,7 @@ async def broadcast(event: str, data: dict):
 
 
 async def send_to(client_id: str, event: str, data: dict):
+    """Send an event payload to a single connected client by ID."""
     ws = _connections.get(client_id)
     if ws:
         try:

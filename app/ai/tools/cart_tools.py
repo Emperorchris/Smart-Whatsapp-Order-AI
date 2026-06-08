@@ -20,6 +20,9 @@ async def add_to_cart(
     If the product has variants, specify variant_attributes like 'size: M, color: Red' to select the right one.
     If the product has variants but no variant_attributes is provided, list the available variants for the customer to choose."""
 
+    if quantity < 1:
+        return "Quantity must be at least 1."
+
     db = config["configurable"]["db"]
     customer_id = config["configurable"]["customer_id"]
 
@@ -158,8 +161,8 @@ async def add_to_cart(
                     subtotal=unit_price * quantity,
                 ),
             )
-    except Exception as exc:
-        logger.error("add_to_cart: FAILED to save cart item — {}", exc)
+    except Exception:
+        logger.opt(exception=True).error("add_to_cart: FAILED to save cart item for product={}", product.name)
         return f"Sorry, something went wrong adding *{product.name}* to your cart. Please try again."
 
     variant_desc = ""
@@ -193,6 +196,7 @@ async def remove_from_cart(config: RunnableConfig, product_name: str) -> str:
                 await cart_item_service.delete_cart_item(db, str(item.id))
                 return f"Removed *{product.name}* from your cart."
         except Exception:
+            logger.opt(exception=True).warning("remove_from_cart: failed to check item id={}", item.id)
             continue
 
     return f"I couldn't find '{product_name}' in your cart."
@@ -230,7 +234,7 @@ async def view_cart(config: RunnableConfig) -> str:
                 attrs = ", ".join(f"{k}: {val}" for k, val in variant.attributes.items())
                 name += f" ({attrs})"
             except Exception:
-                pass
+                logger.warning("view_cart: failed to fetch variant id={}", item.variant_id)
 
         subtotal = item.unit_price * item.quantity
         total += subtotal

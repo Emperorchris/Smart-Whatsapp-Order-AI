@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
 from typing import Optional
 from uuid import UUID
 from datetime import datetime
@@ -8,6 +8,11 @@ from decimal import Decimal
 class MediaItem(BaseModel):
     url: str
     type: str  # "image", "video", "live_image", "live_video"
+
+    @computed_field
+    @property
+    def is_live(self) -> bool:
+        return self.type.startswith("live_")
 
 
 class ProductSchema(BaseModel):

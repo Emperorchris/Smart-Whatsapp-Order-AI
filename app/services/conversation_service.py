@@ -4,18 +4,23 @@ from datetime import date, datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.schemas import conversation_schema
+from ..db.schemas import conversation_schema, message_schema
 from ..core import exceptions, utils
 from ..db.model import conversation_model, staff_model, human_hand_off_model
 from ..db.model.customer_model import Customer
+from . import websocket_service, customer_service, message_service, whatsapp_service
 
 
-async def create_conversation(db: AsyncSession, conversation_data: conversation_schema.ConversationSchema) -> conversation_schema.ConversationResponse:
+async def create_conversation(
+    db: AsyncSession, conversation_data: conversation_schema.ConversationSchema
+) -> conversation_schema.ConversationResponse:
     new_conversation = conversation_model.Conversation(
         customer_id=conversation_data.customer_id,
         conversation_type=conversation_data.conversation_type,
         status=conversation_data.status,
-        ai_enabled=conversation_data.ai_enabled if conversation_data.ai_enabled is not None else True,
+        ai_enabled=conversation_data.ai_enabled
+        if conversation_data.ai_enabled is not None
+        else True,
         handoff_to_human=False,
         handoff_status=utils.HandOffStatus.NONE.value,
         assigned_staff_id=None,
@@ -25,10 +30,33 @@ async def create_conversation(db: AsyncSession, conversation_data: conversation_
     await db.commit()
     await db.refresh(new_conversation)
 
-    return conversation_schema.ConversationResponse.model_validate(new_conversation)
+    response = conversation_schema.ConversationResponse.model_validate(new_conversation)
+
+    # Broadcast new conversation to dashboard
+    try:
+        await websocket_service.broadcast(
+            utils.WebSocketEvent.NEW_CONVERSATION.value,
+            {
+                "id": str(response.id),
+                "customer_id": str(response.customer_id),
+                "status": response.status,
+                "handoff_to_human": response.handoff_to_human,
+                "handoff_status": response.handoff_status,
+                "ai_enabled": response.ai_enabled,
+                "started_at": response.started_at.isoformat()
+                if response.started_at
+                else None,
+            },
+        )
+    except Exception:
+        pass  # Broadcast failure should not block conversation creation
+
+    return response
 
 
-async def get_conversation_by_id(db: AsyncSession, conversation_id: str) -> conversation_schema.ConversationResponse:
+async def get_conversation_by_id(
+    db: AsyncSession, conversation_id: str
+) -> conversation_schema.ConversationResponse:
     result = await db.execute(
         select(conversation_model.Conversation).filter(
             conversation_model.Conversation.id == conversation_id
@@ -42,23 +70,40 @@ async def get_conversation_by_id(db: AsyncSession, conversation_id: str) -> conv
     return conversation_schema.ConversationResponse.model_validate(conversation)
 
 
-async def get_all_conversations(db: AsyncSession) -> list[conversation_schema.ConversationResponse]:
-    result = await db.execute(select(conversation_model.Conversation))
+async def get_all_conversations(
+    db: AsyncSession, skip: int = 0, limit: int = 50
+) -> list[conversation_schema.ConversationResponse]:
+    result = await db.execute(
+        select(conversation_model.Conversation)
+        .order_by(conversation_model.Conversation.started_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
     conversations = result.scalars().all()
-    return [conversation_schema.ConversationResponse.model_validate(c) for c in conversations]
+    return [
+        conversation_schema.ConversationResponse.model_validate(c)
+        for c in conversations
+    ]
 
 
-async def get_conversations_by_customer_id(db: AsyncSession, customer_id: str) -> list[conversation_schema.ConversationResponse]:
+async def get_conversations_by_customer_id(
+    db: AsyncSession, customer_id: str
+) -> list[conversation_schema.ConversationResponse]:
     result = await db.execute(
         select(conversation_model.Conversation).filter(
             conversation_model.Conversation.customer_id == customer_id
         )
     )
     conversations = result.scalars().all()
-    return [conversation_schema.ConversationResponse.model_validate(c) for c in conversations]
+    return [
+        conversation_schema.ConversationResponse.model_validate(c)
+        for c in conversations
+    ]
 
 
-async def start_handoff(db: AsyncSession, conversation_id: str, reason: str = None) -> conversation_schema.ConversationResponse:
+async def start_handoff(
+    db: AsyncSession, conversation_id: str, reason: str = None
+) -> conversation_schema.ConversationResponse:
     result = await db.execute(
         select(conversation_model.Conversation).filter(
             conversation_model.Conversation.id == conversation_id
@@ -69,24 +114,51 @@ async def start_handoff(db: AsyncSession, conversation_id: str, reason: str = No
     if not conversation:
         raise exceptions.NotFoundException("Conversation not found.")
 
-    if conversation.handoff_to_human and conversation.handoff_status == utils.HandOffStatus.ACTIVE.value:
-        raise exceptions.ConflictException("Handoff is already in progress for this conversation.")
+    if (
+        conversation.handoff_to_human
+        and conversation.handoff_status == utils.HandOffStatus.ACTIVE.value
+    ):
+        raise exceptions.ConflictException(
+            "Handoff is already in progress for this conversation."
+        )
 
     conversation.handoff_to_human = True
     conversation.ai_enabled = False
     conversation.assigned_staff_id = None
     conversation.handoff_status = utils.HandOffStatus.PENDING.value
-    conversation.handoff_started_at = datetime.now(tz=timezone.utc).replace(tzinfo=None) if not conversation.handoff_started_at else conversation.handoff_started_at
+    conversation.handoff_started_at = (
+        datetime.now(tz=timezone.utc).replace(tzinfo=None)
+        if not conversation.handoff_started_at
+        else conversation.handoff_started_at
+    )
     conversation.handoff_ended_at = None
     conversation.handoff_reason = reason
 
     await db.commit()
     await db.refresh(conversation)
 
-    return conversation_schema.ConversationResponse.model_validate(conversation)
+    response = conversation_schema.ConversationResponse.model_validate(conversation)
+
+    # Broadcast handoff initiated to dashboard
+    try:
+        await websocket_service.broadcast(
+            utils.WebSocketEvent.NEW_HANDOFF.value,
+            {
+                "conversation_id": str(response.id),
+                "customer_id": str(response.customer_id),
+                "handoff_status": response.handoff_status,
+                "reason": reason,
+            },
+        )
+    except Exception:
+        pass
+
+    return response
 
 
-async def activate_handoff_for_staff(db: AsyncSession, conversation_id: str, staff_id: str) -> conversation_schema.ConversationResponse:
+async def activate_handoff_for_staff(
+    db: AsyncSession, conversation_id: str, staff_id: str
+) -> conversation_schema.ConversationResponse:
     result = await db.execute(
         select(conversation_model.Conversation).filter(
             conversation_model.Conversation.id == conversation_id
@@ -113,10 +185,31 @@ async def activate_handoff_for_staff(db: AsyncSession, conversation_id: str, sta
     await db.commit()
     await db.refresh(conversation)
 
-    return conversation_schema.ConversationResponse.model_validate(conversation)
+    response = conversation_schema.ConversationResponse.model_validate(conversation)
+
+    # Broadcast handoff claim to dashboard
+    try:
+        await websocket_service.broadcast(
+            utils.WebSocketEvent.HANDOFF_CLAIMED.value,
+            {
+                "conversation_id": str(response.id),
+                "customer_id": str(response.customer_id),
+                "assigned_staff_id": str(staff.id),
+                "staff_name": staff.name,
+                "handoff_status": response.handoff_status,
+            },
+        )
+    except Exception:
+        pass
+
+    return response
 
 
-async def resume_ai(db: AsyncSession, conversation_id: str, handoff_status: utils.HandOffStatus | None = None) -> conversation_schema.ConversationResponse:
+async def resume_ai(
+    db: AsyncSession,
+    conversation_id: str,
+    handoff_status: utils.HandOffStatus | None = None,
+) -> conversation_schema.ConversationResponse:
     result = await db.execute(
         select(conversation_model.Conversation).filter(
             conversation_model.Conversation.id == conversation_id
@@ -130,14 +223,17 @@ async def resume_ai(db: AsyncSession, conversation_id: str, handoff_status: util
     conversation.handoff_to_human = False
     conversation.ai_enabled = True
     conversation.assigned_staff_id = None
-    conversation.handoff_status = handoff_status.value if handoff_status else utils.HandOffStatus.RESOLVED.value
+    conversation.handoff_status = (
+        handoff_status.value if handoff_status else utils.HandOffStatus.RESOLVED.value
+    )
     conversation.handoff_ended_at = datetime.now(tz=timezone.utc).replace(tzinfo=None)
     conversation.handoff_reason = None
 
     handoff_result = await db.execute(
         select(human_hand_off_model.HumanHandOff).filter(
             human_hand_off_model.HumanHandOff.conversation_id == conversation_id,
-            human_hand_off_model.HumanHandOff.status == utils.HandOffStatus.ACTIVE.value,
+            human_hand_off_model.HumanHandOff.status
+            == utils.HandOffStatus.ACTIVE.value,
         )
     )
     active_handoff = handoff_result.scalars().first()
@@ -148,10 +244,29 @@ async def resume_ai(db: AsyncSession, conversation_id: str, handoff_status: util
     await db.commit()
     await db.refresh(conversation)
 
-    return conversation_schema.ConversationResponse.model_validate(conversation)
+    response = conversation_schema.ConversationResponse.model_validate(conversation)
+
+    # Broadcast handoff resolution to dashboard
+    try:
+        await websocket_service.broadcast(
+            utils.WebSocketEvent.HANDOFF_RESOLVED.value,
+            {
+                "conversation_id": str(response.id),
+                "customer_id": str(response.customer_id),
+                "handoff_status": response.handoff_status,
+            },
+        )
+    except Exception:
+        pass
+
+    return response
 
 
-async def update_conversation(db: AsyncSession, conversation_id: str, conversation_data: conversation_schema.ConversationSchema) -> conversation_schema.ConversationResponse:
+async def update_conversation(
+    db: AsyncSession,
+    conversation_id: str,
+    conversation_data: conversation_schema.ConversationSchema,
+) -> conversation_schema.ConversationResponse:
     result = await db.execute(
         select(conversation_model.Conversation).filter(
             conversation_model.Conversation.id == conversation_id
@@ -211,7 +326,9 @@ async def get_filtered_conversations(
         Convo.ended_at,
     ).join(Customer, Convo.customer_id == Customer.id)
 
-    count_q = select(func.count(Convo.id)).join(Customer, Convo.customer_id == Customer.id)
+    count_q = select(func.count(Convo.id)).join(
+        Customer, Convo.customer_id == Customer.id
+    )
 
     if status:
         base = base.where(Convo.status == status)
@@ -233,11 +350,13 @@ async def get_filtered_conversations(
 
     total = (await db.execute(count_q)).scalar() or 0
 
-    rows = (await db.execute(
-        base.order_by(Convo.started_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )).all()
+    rows = (
+        await db.execute(
+            base.order_by(Convo.started_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
 
     items = [
         conversation_schema.ConversationListItem(
@@ -261,3 +380,37 @@ async def get_filtered_conversations(
         page_size=page_size,
         total_pages=math.ceil(total / page_size) if page_size > 0 else 0,
     )
+
+
+async def send_message_from_dashboard(
+    db: AsyncSession,
+    conversation_id: str,
+    text: str,
+    staff_id: str | None = None,
+) -> message_schema.MessageResponse:
+    """Send a text message from the admin web dashboard to a customer via WhatsApp.
+
+    Looks up the customer's WhatsApp number from the conversation, sends the
+    message via the WhatsApp Cloud API, then saves it to the DB. The saved
+    message automatically triggers a `new_message` WebSocket broadcast so the
+    dashboard chat view updates in real-time.
+    """
+    conv = await get_conversation_by_id(db, conversation_id)
+    customer = await customer_service.get_customer_by_id(db, str(conv.customer_id))
+
+    sent = await whatsapp_service.send_message(to=customer.whatsapp_number, body=text)
+
+    return await message_service.create_message(
+        db,
+        message_schema.MessageSchema(
+            conversation_id=conversation_id,
+            sender_type=utils.MessageSenderType.STAFF.value,
+            staff_id=staff_id,
+            direction=utils.MessageDirection.OUTBOUND.value,
+            message_type=utils.MessageType.TEXT.value,
+            content=text,
+            status=utils.MessageStatus.SENT.value,
+            whatsapp_message_id=sent.get("message_id") or sent.get("sid"),
+        ),
+    )
+

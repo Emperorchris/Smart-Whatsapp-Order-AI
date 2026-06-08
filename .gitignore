@@ -26,3 +26,6 @@ Thumbs.db
 
 # Ignore .env file containing sensitive information
 .env
+
+*.md
+*.html

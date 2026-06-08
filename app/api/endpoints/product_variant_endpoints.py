@@ -1,41 +1,42 @@
 from fastapi import APIRouter
 from ...core.dependencies import DBSession
 from ...services import product_variant_service
+from ...services.auth_service import CurrentStaff, AdminOnly
 from ...db.schemas import product_variant_schema
 
 variant_router = APIRouter(prefix="/product-variants", tags=["Product Variants"])
 
 
 @variant_router.post("/", response_model=product_variant_schema.ProductVariantResponse)
-async def create_variant(data: product_variant_schema.ProductVariantSchema, db: DBSession):
+async def create_variant(data: product_variant_schema.ProductVariantSchema, db: DBSession, _: AdminOnly):
     return await product_variant_service.create_variant(db, data)
 
 
 @variant_router.get("/", response_model=list[product_variant_schema.ProductVariantResponse])
-async def get_all_variants(db: DBSession):
+async def get_all_variants(db: DBSession, _: CurrentStaff):
     return await product_variant_service.get_all_variants(db)
 
 
 @variant_router.get("/{variant_id}", response_model=product_variant_schema.ProductVariantResponse)
-async def get_variant(variant_id: str, db: DBSession):
+async def get_variant(variant_id: str, db: DBSession, _: CurrentStaff):
     return await product_variant_service.get_variant_by_id(db, variant_id)
 
 
 @variant_router.get("/sku/{sku}", response_model=product_variant_schema.ProductVariantResponse)
-async def get_variant_by_sku(sku: str, db: DBSession):
+async def get_variant_by_sku(sku: str, db: DBSession, _: CurrentStaff):
     return await product_variant_service.get_variant_by_sku(db, sku)
 
 
 @variant_router.get("/product/{product_id}", response_model=list[product_variant_schema.ProductVariantResponse])
-async def get_variants_by_product(product_id: str, db: DBSession):
+async def get_variants_by_product(product_id: str, db: DBSession, _: CurrentStaff):
     return await product_variant_service.get_variants_by_product_id(db, product_id)
 
 
 @variant_router.put("/{variant_id}", response_model=product_variant_schema.ProductVariantResponse)
-async def update_variant(variant_id: str, data: product_variant_schema.ProductVariantSchema, db: DBSession):
+async def update_variant(variant_id: str, data: product_variant_schema.ProductVariantSchema, db: DBSession, _: AdminOnly):
     return await product_variant_service.update_variant(db, variant_id, data)
 
 
 @variant_router.delete("/{variant_id}", status_code=204)
-async def delete_variant(variant_id: str, db: DBSession):
+async def delete_variant(variant_id: str, db: DBSession, _: AdminOnly):
     await product_variant_service.delete_variant(db, variant_id)

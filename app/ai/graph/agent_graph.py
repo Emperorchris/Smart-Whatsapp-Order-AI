@@ -2,6 +2,7 @@ from loguru import logger
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import AIMessage
 
 # from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -132,7 +133,18 @@ async def agent_node(state: AgentState):
         tools = _CUSTOMER_ALL_TOOLS
         logger.info("agent_node: tools_count={}", len(tools))
 
-    response = await llm.bind_tools(tools).ainvoke(messages)
+    bound_llm = llm.bind_tools(tools)
+    max_retries = 2
+    response = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = await bound_llm.ainvoke(messages)
+            break
+        except Exception as llm_exc:
+            logger.warning("agent_node: LLM call failed (attempt {}/{}): {}", attempt + 1, max_retries + 1, llm_exc)
+            if attempt == max_retries:
+                logger.error("agent_node: LLM exhausted retries, returning fallback")
+                response = AIMessage(content="I'm having trouble right now. Please try again in a moment, or type 'human' to speak with our team.")
 
     tool_calls = getattr(response, "tool_calls", None)
     if tool_calls:

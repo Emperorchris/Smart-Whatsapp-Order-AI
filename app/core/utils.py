@@ -144,8 +144,8 @@ class GraphNodeName(enum.Enum):
     ROUTE_BY_INTENT = "route_by_intent_node"
     ORDER_NODE = "order_node"
     PAYMENT_NODE = "payment_node"
-    
-    
+
+
 class IntentName(enum.Enum):
     PRODUCT_BROWSE = "product_browse"
     CART = "cart"
@@ -156,13 +156,12 @@ class IntentName(enum.Enum):
     UNKNOWN = "unknown"
 
 
-
 class OrderActionType(enum.Enum):
     PLACE_ORDER = "place_order"
     CHECK_STATUS = "check_status"
     CANCEL_ORDER = "cancel_order"
-    
-    
+
+
 class DeliveryStatus(enum.Enum):
     PENDING = "pending"
     SHIPPED = "shipped"
@@ -175,3 +174,15 @@ class AddressLabel(enum.Enum):
     OFFICE = "office"
     SHOP = "shop"
     OTHER = "other"
+
+
+class WebSocketEvent(enum.Enum):
+    NEW_ORDER = "new_order"
+    ORDER_STATUS_CHANGED = "order_status_changed"
+    NEW_HANDOFF = "new_handoff"
+    HANDOFF_CLAIMED = "handoff_claimed"
+    HANDOFF_RESOLVED = "handoff_resolved"
+    NEW_CUSTOMER = "new_customer"
+    LOW_STOCK_ALERT = "low_stock_alert"
+    NEW_CONVERSATION = "new_conversation"
+    NEW_MESSAGE = "new_message"

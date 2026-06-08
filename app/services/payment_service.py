@@ -43,8 +43,10 @@ async def get_payment_by_id(db: AsyncSession, payment_id: str) -> payment_schema
     return payment_schema.PaymentResponse.model_validate(payment)
 
 
-async def get_all_payments(db: AsyncSession) -> list[payment_schema.PaymentResponse]:
-    result = await db.execute(select(payment_model.Payment))
+async def get_all_payments(db: AsyncSession, skip: int = 0, limit: int = 50) -> list[payment_schema.PaymentResponse]:
+    result = await db.execute(
+        select(payment_model.Payment).order_by(payment_model.Payment.created_at.desc()).offset(skip).limit(limit)
+    )
     payments = result.scalars().all()
     return [payment_schema.PaymentResponse.model_validate(p) for p in payments]
 

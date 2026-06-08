@@ -19,10 +19,8 @@ async def get_setting(db: AsyncSession, key: str) -> store_settings_schema.Store
     return store_settings_schema.StoreSettingResponse.model_validate(setting)
 
 
-async def upsert_setting(
-    db: AsyncSession,
-    data: store_settings_schema.StoreSettingSchema,
-) -> store_settings_schema.StoreSettingResponse:
+async def _upsert_one(db: AsyncSession, data: store_settings_schema.StoreSettingSchema) -> StoreSettings:
+    """Internal: upsert a single setting without committing."""
     result = await db.execute(select(StoreSettings).where(StoreSettings.key == data.key))
     setting = result.scalars().first()
 
@@ -33,7 +31,15 @@ async def upsert_setting(
     else:
         setting = StoreSettings(key=data.key, value=data.value, description=data.description)
         db.add(setting)
+    return setting
 
+
+async def upsert_setting(
+    db: AsyncSession,
+    data: store_settings_schema.StoreSettingSchema,
+) -> store_settings_schema.StoreSettingResponse:
+    """Create or update a single setting."""
+    setting = await _upsert_one(db, data)
     await db.commit()
     await db.refresh(setting)
     return store_settings_schema.StoreSettingResponse.model_validate(setting)
@@ -43,10 +49,15 @@ async def bulk_upsert(
     db: AsyncSession,
     bulk: store_settings_schema.StoreSettingsBulkUpdate,
 ) -> list[store_settings_schema.StoreSettingResponse]:
-    results = []
+    """Atomically upsert multiple settings in a single transaction."""
+    settings = []
     for item in bulk.settings:
-        results.append(await upsert_setting(db, item))
-    return results
+        settings.append(await _upsert_one(db, item))
+
+    await db.commit()
+    for s in settings:
+        await db.refresh(s)
+    return [store_settings_schema.StoreSettingResponse.model_validate(s) for s in settings]
 
 
 async def delete_setting(db: AsyncSession, key: str):

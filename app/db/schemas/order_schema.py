@@ -27,10 +27,26 @@ class OrderSchema(BaseModel):
 
 class OrderResponse(OrderSchema):
     id: UUID
+    estimated_delivery_date: Optional[datetime] = None
+    shipped_at: Optional[datetime] = None
+    delivered_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UpdateOrderStatusWithDetails(BaseModel):
+    status: utils.OrderStatus
+    estimated_delivery_date: Optional[datetime] = None
+    notes: Optional[str] = None
+    notify_customer: bool = True
+
+
+class UpdateItemDeliveryStatus(BaseModel):
+    delivery_status: utils.DeliveryStatus
+    notes: Optional[str] = None
+    notify_customer: bool = True
 
 
 class BulkOrderStatusUpdate(BaseModel):

@@ -37,8 +37,13 @@ class Order(Base):
     address_landmark = Column(String, nullable=True)  # nearby landmark for delivery riders
     
     extra_metadata = Column(JSON, nullable=True)  # For any additional order info
-    
+
+    estimated_delivery_date = Column(DateTime, nullable=True)
+    shipped_at = Column(DateTime, nullable=True)
+    delivered_at = Column(DateTime, nullable=True)
+
     order_items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan", lazy="selectin")
+    status_history = relationship("OrderStatusHistory", back_populates="order", cascade="all, delete-orphan", lazy="selectin")
 
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(tz=timezone.utc).replace(tzinfo=None))

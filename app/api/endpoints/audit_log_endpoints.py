@@ -5,6 +5,7 @@ from fastapi import APIRouter, Query
 
 from ...core.dependencies import DBSession
 from ...services import audit_log_service
+from ...services.auth_service import AdminOnly
 from ...db.schemas import audit_log_schema
 
 audit_router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
@@ -13,6 +14,7 @@ audit_router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 @audit_router.get("/", response_model=audit_log_schema.PaginatedAuditLogResponse)
 async def get_audit_logs(
     db: DBSession,
+    _: AdminOnly,
     action: Optional[str] = None,
     resource_type: Optional[str] = None,
     staff_id: Optional[str] = None,

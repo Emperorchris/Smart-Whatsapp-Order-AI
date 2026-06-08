@@ -20,7 +20,9 @@ from . import (
     human_handoff_service,
     message_service,
     whatsapp_service,
+    websocket_service,
 )
+from .whatsapp_service import normalize_phone
 
 # ── Staff chat mode tracking (in-memory) ──
 # Tracks whether each staff member is talking to AI or to the customer
@@ -114,6 +116,7 @@ async def handle_staff_incoming_message(
     - # prefix always routes to AI (backward compatible)
     - No active handoff: all messages → AI assistant
     """
+    staff_number = normalize_phone(staff_number)
     logger.info(
         "staff_webhook: received message from {} — body={!r}, interactive_id={!r}",
         staff_number,
@@ -137,6 +140,13 @@ async def handle_staff_incoming_message(
         or interactive_id.startswith("claim_ai_")
     ):
         await _handle_claim_button(db, staff, staff_number, interactive_id)
+        return "handled"
+
+    # Handle handoff history pagination buttons
+    if interactive_id and interactive_id.startswith("handoffs_page_"):
+        page_str = interactive_id[len("handoffs_page_"):]
+        enriched = f"[Staff tapped to view handoff history page {page_str}. Call get_all_handoffs with page={page_str}.]"
+        await _process_staff_ai_message(db, staff, enriched, active_handoff=None)
         return "handled"
 
     # Check if staff has an active handoff
@@ -174,6 +184,9 @@ async def handle_staff_incoming_message(
         if interactive_id == "staff_cmd_done":
             logger.info("staff_webhook: Done button pressed, resolving handoff")
             clear_staff_mode(staff_id)
+            await human_handoff_service.update_handoff_status(
+                db, active_handoff.id, utils.HandOffStatus.RESOLVED
+            )
             await conversation_service.resume_ai(
                 db, str(active_handoff.conversation_id)
             )
@@ -187,6 +200,18 @@ async def handle_staff_incoming_message(
                 await whatsapp_service.send_message(
                     to=cust.whatsapp_number,
                     body="Hey! 👋 Our support team is done helping you out. I'm back and ready to assist you with anything else you need!",
+                )
+            except Exception:
+                pass
+            try:
+                await websocket_service.broadcast(
+                    utils.WebSocketEvent.HANDOFF_RESOLVED.value,
+                    {
+                        "handoff_id": str(active_handoff.id),
+                        "conversation_id": str(active_handoff.conversation_id),
+                        "resolved_by": "staff",
+                        "handoff_status": utils.HandOffStatus.RESOLVED.value,
+                    },
                 )
             except Exception:
                 pass
@@ -248,7 +273,7 @@ async def handle_staff_incoming_message(
 
         if current_mode == utils.StaffChatMode.CUSTOMER.value:
             logger.info("staff_webhook: CUSTOMER mode, forwarding to customer")
-            await _handle_staff_reply(db, staff_number, clean_body, message_sid)
+            await _handle_staff_reply(db, staff_number, clean_body)
 
             # Send reminder button after a gap
             if _should_send_reminder(staff_id):
@@ -446,8 +471,37 @@ async def _process_staff_ai_message(
             new_messages = result["messages"][history_count:]
             await save_agent_messages(db, conversation_id, new_messages)
 
+            # Persist staff's own message so the dashboard shows it
+            await message_service.create_message(
+                db,
+                MessageSchema(
+                    conversation_id=conversation_id,
+                    sender_type=utils.MessageSenderType.STAFF.value,
+                    staff_id=staff.id,
+                    direction=utils.MessageDirection.INBOUND.value,
+                    message_type=utils.MessageType.TEXT.value,
+                    content=body,
+                    status=utils.MessageStatus.DELIVERED.value,
+                ),
+            )
+
         # Send the reply to staff via WhatsApp
-        await whatsapp_service.send_message(to=staff.whatsapp_number, body=ai_reply)
+        sent = await whatsapp_service.send_message(to=staff.whatsapp_number, body=ai_reply)
+
+        # Persist the AI reply so the dashboard shows it
+        if conversation_id:
+            await message_service.create_message(
+                db,
+                MessageSchema(
+                    conversation_id=conversation_id,
+                    sender_type=utils.MessageSenderType.AI.value,
+                    direction=utils.MessageDirection.OUTBOUND.value,
+                    message_type=utils.MessageType.TEXT.value,
+                    content=ai_reply,
+                    status=utils.MessageStatus.SENT.value,
+                    whatsapp_message_id=sent.get("message_id") or sent.get("sid"),
+                ),
+            )
 
     except Exception as exc:
         logger.error(
@@ -460,7 +514,7 @@ async def _process_staff_ai_message(
 
 
 async def _handle_staff_reply(
-    db: AsyncSession, staff_number: str, body: str, message_sid: str
+    db: AsyncSession, staff_number: str, body: str
 ) -> None:
     staff = await get_staff_by_phone(db, staff_number)
 
@@ -494,8 +548,9 @@ async def _handle_staff_reply(
         db, str(conversation.customer_id)
     )
 
-    sent = await whatsapp_service.send_message(to=customer.whatsapp_number, body=body)
+    sent = await whatsapp_service.send_message(to=normalize_phone(customer.whatsapp_number), body=body)
 
+    # Save once as OUTBOUND — this is the canonical record shown in the dashboard
     await message_service.create_message(
         db,
         MessageSchema(
@@ -507,20 +562,6 @@ async def _handle_staff_reply(
             content=body,
             status=utils.MessageStatus.SENT.value,
             whatsapp_message_id=sent.get("message_id") or sent.get("sid"),
-        ),
-    )
-
-    await message_service.create_message(
-        db,
-        MessageSchema(
-            conversation_id=active_handoff.conversation_id,
-            sender_type=utils.MessageSenderType.STAFF.value,
-            staff_id=staff.id,
-            direction=utils.MessageDirection.INBOUND.value,
-            message_type=utils.MessageType.TEXT.value,
-            content=body,
-            status=utils.MessageStatus.DELIVERED.value,
-            whatsapp_message_id=message_sid,
         ),
     )
 

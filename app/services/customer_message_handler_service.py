@@ -23,7 +23,7 @@ from . import (
     whatsapp_webhook_processing_service,
     conversation_service,
 )
-from . import staff_service
+from . import staff_service, voice_note_service
 from .whatsapp_staff_webhook_service import _get_staff_mode
 
 
@@ -38,6 +38,31 @@ async def process_customer_message(
     sender_type: str = utils.MessageSenderType.CUSTOMER.value,
 ):
     """Process a single customer message: resolve context, run the AI agent, and send the reply."""
+
+    # ── Voice note handling ──
+    customer_sent_voice_note = False
+    if payload.message_type == "audio" and payload.media_urls:
+        audio_media_id = payload.media_urls[0]
+        logger.info("process_message: voice note detected, media_id={}", audio_media_id)
+
+        result = await voice_note_service.transcribe_voice_note(audio_media_id)
+
+        if result.text:
+            # Replace empty body with transcribed text
+            payload.body = result.text
+            customer_sent_voice_note = True
+            logger.info("process_message: transcribed voice note — '{}'", result.text[:100])
+        else:
+            # Transcription failed — ask customer to retry or type
+            await whatsapp_service.send_message(
+                to=payload.sender_number,
+                body="I couldn't catch that clearly. Could you type your message or send another voice note?",
+            )
+            return
+
+        # Store the Cloudinary audio URL in media_urls so it's saved in the message record
+        if result.audio_url:
+            payload.media_urls = [result.audio_url]
 
     # Handle interactive address selection from checkout flow
     if payload.interactive_id:
@@ -68,6 +93,15 @@ async def process_customer_message(
                 )
             else:
                 payload.body = f'[Customer wants to change address for order {order_number}. Call update_order_address with order_number="{order_number}" and new_address_id="{addr_id}"]'
+        elif payload.interactive_id.startswith("cancel|"):
+            order_number = payload.interactive_id.split("|")[1] if "|" in payload.interactive_id else ""
+            payload.body = f'[Customer wants to cancel order {order_number}. Call cancel_order with order_number="{order_number}". Do NOT do anything else.]'
+        elif payload.interactive_id.startswith("track|"):
+            order_number = payload.interactive_id.split("|")[1] if "|" in payload.interactive_id else ""
+            payload.body = f'[Customer wants to track order {order_number}. Call check_order_status with order_number="{order_number}".]'
+        elif payload.interactive_id.startswith("products_page_"):
+            page = payload.interactive_id[len("products_page_"):]
+            payload.body = f'[Customer tapped "Show More" for product list. Call list_product_names with page={page}.]'
         elif payload.interactive_id.startswith("addr_label_"):
             label = payload.interactive_id[len("addr_label_") :]
             payload.body = f"[Customer selected address type: {label}. Ask for their full address details: street, city, state, landmark.]"
@@ -106,11 +140,19 @@ async def process_customer_message(
                 if staff and staff.whatsapp_number:
                     customer_name = payload.profile_name or "Customer"
                     current_mode = _get_staff_mode(str(staff.id))
+                    # If customer sent a voice note, forward the audio + transcription
+                    if payload.message_type == "audio" and payload.media_urls:
+                        await whatsapp_service.send_audio(
+                            to=staff.whatsapp_number,
+                            audio_url=payload.media_urls[0],
+                        )
+
                     # Send customer message as interactive buttons so staff can act immediately
+                    forward_body = payload.body[:1024] if payload.body else "[Voice note — listen above]"
                     await whatsapp_service.send_interactive_buttons(
                         to=staff.whatsapp_number,
                         header=f"{customer_name} says:",
-                        body=payload.body[:1024],
+                        body=forward_body,
                         buttons=[
                             {"id": "staff_mode_ai", "title": "Talk to AI"},
                             {"id": "staff_cmd_done", "title": "Done"},
@@ -178,6 +220,16 @@ async def process_customer_message(
     ai_reply = re.sub(r"\n*\[MEDIA_URLS\].*?\[/MEDIA_URLS\]", "", ai_reply)
     ai_reply = ai_reply.strip()
 
+    # Suppress AI text when a tool already sent an interactive WhatsApp message
+    # (e.g. address picker, saved address list). Sending text on top confuses the customer.
+    if any(
+        "[INTERACTIVE_SENT]" in str(m.content)
+        for m in new_messages
+        if hasattr(m, "content")
+    ):
+        logger.info("process_customer_message: suppressing AI text — interactive already sent by tool")
+        ai_reply = ""
+
     # If there are product blocks, merge the AI follow-up into the last block's caption
     # so the customer sees one message instead of a duplicate
     if product_blocks and ai_reply:
@@ -185,7 +237,7 @@ async def process_customer_message(
         product_blocks[-1] = (f"{last_text}\n\n{ai_reply}", last_media)
         ai_reply = ""
 
-    await _send_reply(db, payload, active_conversation, ai_reply, product_blocks)
+    await _send_reply(db, payload, active_conversation, ai_reply, product_blocks, customer_sent_voice_note)
 
 
 async def _send_reply(
@@ -194,8 +246,13 @@ async def _send_reply(
     active_conversation: ConversationResponse,
     ai_reply: str,
     product_blocks: list[tuple[str, list[str]]],
+    reply_with_voice: bool = False,
 ):
-    """Send the AI reply (with product media if any) back to the customer via WhatsApp."""
+    """Send the AI reply (with product media if any) back to the customer via WhatsApp.
+
+    If reply_with_voice is True (customer sent a voice note), the plain-text AI reply
+    is converted to a voice note via TTS. Product blocks are always sent as text/media.
+    """
     try:
         if product_blocks:
             # Send product blocks sequentially to preserve display order
@@ -233,17 +290,48 @@ async def _send_reply(
                     logger.warning("Failed to send product block: %s", exc)
 
             if ai_reply:
-                await whatsapp_service.send_message(
-                    to=payload.sender_number,
-                    body=ai_reply,
-                )
+                await _dispatch_text_or_voice(db, payload, active_conversation, ai_reply, reply_with_voice)
         else:
-            await whatsapp_service.send_message(
-                to=payload.sender_number,
-                body=ai_reply,
-            )
+            if ai_reply:
+                await _dispatch_text_or_voice(db, payload, active_conversation, ai_reply, reply_with_voice)
     except Exception as exc:
         logger.error("Failed to send reply to %s: %s", payload.sender_number, exc)
+
+
+async def _dispatch_text_or_voice(
+    db: AsyncSession,
+    payload: IncomingWhatsAppPayload,
+    active_conversation: ConversationResponse,
+    text: str,
+    as_voice: bool,
+):
+    """Send text as a voice note (TTS) if as_voice=True, otherwise send as plain text.
+    Falls back to plain text if TTS fails."""
+    if as_voice:
+        sent = await voice_note_service.generate_and_send_ai_voice_reply(
+            db=db,
+            text=text,
+            customer_phone=payload.sender_number,
+            conversation_id=str(active_conversation.id),
+        )
+        if sent:
+            return
+        logger.warning("_dispatch_text_or_voice: TTS failed, falling back to text reply")
+
+    # Plain text path (also fallback when TTS fails)
+    result_msg = await whatsapp_service.send_message(to=payload.sender_number, body=text)
+    await message_service.create_message(
+        db,
+        MessageSchema(
+            conversation_id=active_conversation.id,
+            sender_type=utils.MessageSenderType.AI.value,
+            direction=utils.MessageDirection.OUTBOUND.value,
+            message_type=utils.MessageType.TEXT.value,
+            content=text,
+            whatsapp_message_id=result_msg.get("message_id"),
+            status=utils.MessageStatus.SENT.value,
+        ),
+    )
 
 
 def _extract_product_blocks(messages: list) -> list[tuple[str, list[str]]]:

@@ -18,6 +18,7 @@ async def log_action(
     staff_name: str | None = None,
     ip_address: str | None = None,
 ):
+    """Persist a single audit log entry for a staff or system action."""
     entry = AuditLog(
         staff_id=staff_id,
         staff_name=staff_name,
@@ -41,6 +42,7 @@ async def get_audit_logs(
     page: int = 1,
     page_size: int = 50,
 ) -> audit_log_schema.PaginatedAuditLogResponse:
+    """Return paginated audit logs filtered by action, resource, staff, or date range."""
     base = select(AuditLog)
     count_q = select(func.count(AuditLog.id))
 

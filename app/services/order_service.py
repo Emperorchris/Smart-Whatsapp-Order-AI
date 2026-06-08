@@ -6,6 +6,7 @@ from ..db.schemas import customer_address_schema
 from ..db.schemas import order_schema
 from ..core import exceptions, utils
 from ..db.model import order_model
+from . import websocket_service
 
 
 async def create_order(db: AsyncSession, order_data: order_schema.OrderSchema) -> order_schema.OrderResponse:
@@ -39,7 +40,27 @@ async def create_order(db: AsyncSession, order_data: order_schema.OrderSchema) -
     await db.commit()
     await db.refresh(new_order)
 
-    return order_schema.OrderResponse.model_validate(new_order)
+    response = order_schema.OrderResponse.model_validate(new_order)
+
+    # Broadcast new order to dashboard
+    try:
+        await websocket_service.broadcast(
+            utils.WebSocketEvent.NEW_ORDER.value,
+            {
+                "order_id": str(response.id),
+                "order_number": response.order_number,
+                "customer_id": str(response.customer_id) if response.customer_id else None,
+                "customer_name": response.customer_name,
+                "status": response.status,
+                "payment_status": response.payment_status,
+                "total_amount": str(response.total_amount),
+                "created_at": response.created_at.isoformat() if response.created_at else None,
+            },
+        )
+    except Exception:
+        pass
+
+    return response
 
 
 async def get_order_by_id(db: AsyncSession, order_id: str) -> order_schema.OrderResponse:
@@ -54,8 +75,10 @@ async def get_order_by_id(db: AsyncSession, order_id: str) -> order_schema.Order
     return order_schema.OrderResponse.model_validate(order)
 
 
-async def get_all_orders(db: AsyncSession) -> list[order_schema.OrderResponse]:
-    result = await db.execute(select(order_model.Order))
+async def get_all_orders(db: AsyncSession, skip: int = 0, limit: int = 50) -> list[order_schema.OrderResponse]:
+    result = await db.execute(
+        select(order_model.Order).order_by(order_model.Order.created_at.desc()).offset(skip).limit(limit)
+    )
     orders = result.scalars().all()
     return [order_schema.OrderResponse.model_validate(o) for o in orders]
 

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from ...core.dependencies import DBSession
 from ...services import broadcast_service
+from ...services.auth_service import AdminOnly
 
 broadcast_router = APIRouter(prefix="/broadcast", tags=["Broadcast"])
 
@@ -17,7 +18,7 @@ class BroadcastRequest(BaseModel):
 
 
 @broadcast_router.post("/")
-async def send_broadcast(data: BroadcastRequest, db: DBSession):
+async def send_broadcast(data: BroadcastRequest, db: DBSession, _: AdminOnly):
     result = await broadcast_service.broadcast_message(
         db,
         message=data.message,

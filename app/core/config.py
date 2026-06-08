@@ -9,6 +9,9 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     ANTHROPIC_LLM_MODEL = os.getenv("ANTHROPIC_LLM_MODEL", "claude-haiku-4-5")
     OPENAI_LLM_MODEL = os.getenv("OPENAI_LLM_MODEL", "gpt-5-nano")
+    OPENAI_WHISPER_MODEL = os.getenv("OPENAI_WHISPER_MODEL", "whisper-1")
+    OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "tts-1")
+    OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "nova")  # nova | alloy | echo | fable | onyx | shimmer
     ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60))
     REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", 7))
     ALGORITHM = os.getenv("ALGORITHM", "HS256")

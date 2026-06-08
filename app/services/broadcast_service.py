@@ -14,6 +14,7 @@ async def broadcast_message(
     segment: str | None = None,
     customer_ids: list[str] | None = None,
 ) -> dict:
+    """Send a WhatsApp message to all customers matching the given segment or IDs."""
     if customer_ids:
         query = select(Customer).where(Customer.id.in_(customer_ids))
     elif segment:

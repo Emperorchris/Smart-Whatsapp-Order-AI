@@ -2,14 +2,14 @@ from fastapi import APIRouter
 from ...core.dependencies import DBSession
 from ...core import utils
 from ...services import human_handoff_service
-from ...services.auth_service import CurrentStaff, AdminOnly
+from ...services.auth_service import CurrentStaff
 from ...db.schemas.human_hand_off_schema import HumanHandOffSchema, HumanHandOffResponse
 
 handoff_router = APIRouter(prefix="/handoffs", tags=["Human Handoffs"])
 
 
 @handoff_router.get("/", response_model=list[HumanHandOffResponse])
-async def get_all_handoffs(db: DBSession, current_staff: AdminOnly):
+async def get_all_handoffs(db: DBSession, _: CurrentStaff):
     return await human_handoff_service.get_all_handoffs(db)
 
 
@@ -39,7 +39,7 @@ async def get_handoffs_by_conversation(conversation_id: str, db: DBSession, curr
 
 
 @handoff_router.get("/staff/{staff_id}", response_model=list[HumanHandOffResponse])
-async def get_handoffs_by_staff(staff_id: str, db: DBSession, current_staff: AdminOnly):
+async def get_handoffs_by_staff(staff_id: str, db: DBSession, _: CurrentStaff):
     return await human_handoff_service.get_handoffs_by_staff_id(db, staff_id)
 
 
@@ -54,7 +54,7 @@ async def claim_next_handoff(db: DBSession, current_staff: CurrentStaff):
 
 
 @handoff_router.post("/{handoff_id}/assign", response_model=HumanHandOffResponse)
-async def assign_handoff(handoff_id: str, staff_id: str, db: DBSession, current_staff: AdminOnly):
+async def assign_handoff(handoff_id: str, staff_id: str, db: DBSession, _: CurrentStaff):
     return await human_handoff_service.assign_handoff_to_staff(db, handoff_id, staff_id)
 
 
@@ -74,5 +74,5 @@ async def update_handoff_status(
 
 
 @handoff_router.delete("/{handoff_id}", status_code=204)
-async def delete_handoff(handoff_id: str, db: DBSession, current_staff: AdminOnly):
+async def delete_handoff(handoff_id: str, db: DBSession, _: CurrentStaff):
     await human_handoff_service.delete_handoff(db, handoff_id)

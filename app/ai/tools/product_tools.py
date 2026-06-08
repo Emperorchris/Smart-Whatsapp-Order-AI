@@ -1,7 +1,8 @@
 from typing import Optional
+from loguru import logger
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from ...services import product_service
+from ...services import product_service, whatsapp_service
 from ...services.product_variant_service import get_variants_by_product_id
 
 
@@ -84,8 +85,67 @@ async def search_products(
 
         blocks.append(f"[PRODUCT_START]\n{line}\n[PRODUCT_END]")
 
-    result = "Here are the products we have:\n\n" + "\n\n".join(blocks) + "\n\nProducts sent. Stop calling tools and reply to the customer now."
+    result = (
+        "Here are the products we have:\n\n"
+        + "\n\n".join(blocks)
+        + "\n\nProducts sent. Stop calling tools and reply to the customer now."
+    )
     return result
+
+
+@tool
+async def list_product_names(config: RunnableConfig, page: int = 1) -> str:
+    """List all available product names with prices. No images, no variants, no descriptions.
+    Use this when a customer asks to see all products, what you sell, your catalog, or browse everything.
+    Do NOT use search_products for "show all products" — use this instead.
+    Results are paginated (20 per page). If has_more is true, tell the customer they can see more."""
+
+    db = config["configurable"]["db"]
+    customer_phone = config["configurable"].get("customer_whatsapp_number")
+
+    data = await product_service.get_product_names_paginated(db, page=page)
+    products = data["products"]
+    has_more = data["has_more"]
+
+    if not products:
+        return "We don't have any products available right now."
+
+    lines = [f"• {p['name']} — NGN {p['price']:,.2f}" for p in products]
+    text = "Here's what we have:\n\n" + "\n".join(lines)
+
+    # Always send via WhatsApp directly when we have customer context.
+    # This avoids relying on the LLM to repeat long lists (which may get summarized).
+    if customer_phone:
+        try:
+            if has_more:
+                next_page = page + 1
+                await whatsapp_service.send_interactive_buttons(
+                    to=customer_phone,
+                    body=text,
+                    buttons=[
+                        {"id": f"products_page_{next_page}", "title": "Show More"}
+                    ],
+                )
+                logger.info(
+                    "list_product_names: sent page {} with Show More button", page
+                )
+                return (
+                    "Product list sent with a Show More button. "
+                    "Reply in one short line only. Do NOT mention totals, counts, remaining items, or page numbers."
+                )
+
+            # Last page: send plain text message with the remaining products
+            await whatsapp_service.send_message(to=customer_phone, body=text)
+            logger.info("list_product_names: sent final page {} as text", page)
+            return (
+                "Product list sent. "
+                "Reply in one short line only. Do NOT mention totals, counts, remaining items, or page numbers."
+            )
+        except Exception as exc:
+            logger.error("list_product_names: failed to send product list — {}", exc)
+
+    # Fallback (e.g. missing customer context in tests)
+    return text
 
 
 @tool
@@ -120,9 +180,7 @@ async def get_product_details(config: RunnableConfig, product_name: str) -> str:
         media = next((item for item in p.media if item.type == "image"), None)
 
         if not media:
-            media = next(
-                (item for item in p.media if item.type == "live_image"), None
-            )
+            media = next((item for item in p.media if item.type == "live_image"), None)
 
         if not media:
             media = next((item for item in p.media if item.type == "video"), None)
@@ -206,6 +264,7 @@ async def get_product_videos(config: RunnableConfig, product_name: str) -> str:
 
 
 product_tools = [
+    list_product_names,
     search_products,
     get_product_details,
     get_product_media,

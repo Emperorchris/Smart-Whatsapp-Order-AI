@@ -1,11 +1,19 @@
 from fastapi import FastAPI, Request, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from .core import Config
 from .core.exceptions import register_exception_handlers
+from .core.rate_limiter import limiter
 from .api.router import api_router
 from .api.endpoints.websocket_endpoints import ws_router
+from .db.db_engine import AsyncSessionLocal
+from sqlalchemy import text
+
 
 app = FastAPI()
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,8 +35,14 @@ def root():
 
 
 @app.get("/health")
-def health():
-    return {"status": "healthy"}
+async def health():
+
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT 1"))
+        return {"status": "healthy", "database": "connected"}
+    except Exception:
+        return {"status": "unhealthy", "database": "disconnected"}
 
 
 # @app.get("/webhook/whatsapp")

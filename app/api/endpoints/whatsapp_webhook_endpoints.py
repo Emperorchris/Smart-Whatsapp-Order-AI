@@ -1,8 +1,8 @@
 import asyncio
-# import logging
 from loguru import logger
 from fastapi import APIRouter, Request, Response
 from ...core.dependencies import DBSession
+from ...core.rate_limiter import limiter
 from ...core.config import Config
 from ...core import utils, exceptions
 from ...db.db_engine import AsyncSessionLocal
@@ -51,7 +51,8 @@ async def verify_webhook(request: Request):
 # ──────────────────────────────────────────────────────────────
 
 @whatsapp_webhook_router.post("")
-async def whatsapp_webhook(db: DBSession, request: Request):
+@limiter.limit("60/minute")
+async def whatsapp_webhook(request: Request, db: DBSession):
     body = await request.json()
 
     # Meta sends status updates too (delivered, read, etc.) — ignore those
@@ -115,8 +116,11 @@ async def _process_staff_message_background(payload):
                 payload.message_sid,
                 interactive_id=payload.interactive_id,
             )
-        except Exception as exc:
-            logger.error("Background staff message processing failed: {}", exc)
+        except Exception:
+            logger.opt(exception=True).error(
+                "Background staff message processing failed: sender={}, body={!r}",
+                payload.sender_number, payload.body[:100],
+            )
 
 
 async def _process_message_background(payload, customer, active_conversation, sender_type=utils.MessageSenderType.CUSTOMER.value):
@@ -132,8 +136,11 @@ async def _process_message_background(payload, customer, active_conversation, se
                 await customer_message_handler_service.process_customer_message(
                     db, payload, customer, active_conversation, sender_type
                 )
-        except Exception as exc:
-            logger.error("Background message processing failed: {}", exc)
+        except Exception:
+            logger.opt(exception=True).error(
+                "Background message processing failed: customer={}, conversation={}, body={!r}",
+                str(customer.id), conv_key, payload.body[:100],
+            )
         finally:
             if not lock.locked():
                 _conversation_locks.pop(conv_key, None)

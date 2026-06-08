@@ -1,17 +1,18 @@
 from fastapi import APIRouter, Query
 from ...core.dependencies import DBSession
 from ...services import customer_segmentation_service
+from ...services.auth_service import AdminOnly
 
 segmentation_router = APIRouter(prefix="/segmentation", tags=["Customer Segmentation"])
 
 
 @segmentation_router.get("/summary")
-async def get_segment_summary(db: DBSession):
+async def get_segment_summary(db: DBSession, _: AdminOnly):
     return await customer_segmentation_service.get_segment_summary(db)
 
 
 @segmentation_router.post("/refresh")
-async def refresh_segments(db: DBSession):
+async def refresh_segments(db: DBSession, _: AdminOnly):
     counts = await customer_segmentation_service.auto_segment_customers(db)
     return {"message": "Segmentation updated", "counts": counts}
 
@@ -20,6 +21,7 @@ async def refresh_segments(db: DBSession):
 async def get_customers_by_segment(
     segment: str,
     db: DBSession,
+    _: AdminOnly,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):

@@ -35,9 +35,9 @@ def _meta_headers() -> dict[str, str]:
     }
 
 
-def _normalize_phone(number: str) -> str:
-    """Normalize to E.164 digits for Meta API.
-    Handles: +234..., 234..., 0803..., 803..."""
+def normalize_phone(number: str) -> str:
+    """Normalize a phone number to E.164 digits for the Meta API.
+    Handles: +234..., 234..., 0803..., 803..., whatsapp:+234..."""
     value = number.strip()
     if value.lower().startswith("whatsapp:"):
         value = value.split(":", 1)[1].strip()
@@ -50,11 +50,54 @@ def _normalize_phone(number: str) -> str:
     return value
 
 
+# Keep private alias for internal use
+_normalize_phone = normalize_phone
+
+
+async def download_media(media_id: str) -> bytes:
+    """Download media (voice note, image, etc.) from WhatsApp by media ID.
+
+    WhatsApp media download is a 2-step process:
+      1. GET /media_id → returns a JSON with the download URL
+      2. GET download_url → returns the actual file bytes
+
+    Both calls need the Meta access token for authentication.
+    """
+    headers = _meta_headers()
+    api_base = f"https://graph.facebook.com/{Config.META_WHATSAPP_API_VERSION}"
+
+    # Step 1: Get the download URL from WhatsApp
+    url_resp = await _http_client.get(f"{api_base}/{media_id}", headers=headers)
+    if url_resp.status_code != 200:
+        logger.error("download_media: failed to get URL for media_id={} — {}", media_id, url_resp.text)
+        raise exceptions.InternalServerException("Failed to retrieve media URL from WhatsApp.")
+
+    download_url = url_resp.json().get("url")
+    if not download_url:
+        raise exceptions.InternalServerException("WhatsApp returned no download URL for media.")
+
+    # Step 2: Download the actual file bytes
+    # Note: Content-Type header must NOT be application/json for binary download
+    download_headers = {"Authorization": headers["Authorization"]}
+    file_resp = await _http_client.get(download_url, headers=download_headers)
+    if file_resp.status_code != 200:
+        logger.error("download_media: failed to download file — {}", file_resp.status_code)
+        raise exceptions.InternalServerException("Failed to download media file from WhatsApp.")
+
+    logger.info("download_media: downloaded {} bytes for media_id={}", len(file_resp.content), media_id)
+    return file_resp.content
+
+
 async def send_message(
     to: str, body: str, media_urls: list[str] | None = None
 ) -> dict[str, Any]:
+    """Send a text message (and optional media) to a WhatsApp number via the Meta Cloud API."""
     if not body or not body.strip():
         raise exceptions.BadRequestException("Message body cannot be empty.")
+
+    # WhatsApp text message limit is 4096 characters
+    if len(body) > 4096:
+        body = body[:4093] + "..."
 
     phone = _normalize_phone(to)
     headers = _meta_headers()
@@ -113,6 +156,43 @@ async def send_message(
         "to": phone,
         "media_ids": sent_media_ids,
     }
+
+
+async def send_audio(to: str, audio_url: str, caption: str | None = None) -> dict[str, Any]:
+    """Send an audio file to a WhatsApp number.
+
+    Args:
+        to: Recipient phone number.
+        audio_url: Public URL of the audio file (e.g. Cloudinary URL).
+        caption: Optional text caption (not supported by WhatsApp audio — ignored by API,
+                 but we send as a follow-up text if provided).
+    """
+    phone = _normalize_phone(to)
+    headers = _meta_headers()
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "audio",
+        "audio": {"link": audio_url},
+    }
+
+    try:
+        resp = await _http_client.post(META_API_BASE, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPError as exc:
+        logger.error("send_audio: failed — {}", exc)
+        raise exceptions.BadRequestException("Failed to send audio message.")
+
+    message_id = data.get("messages", [{}])[0].get("id")
+    logger.info("send_audio: sent to {} — msg_id={}", phone, message_id)
+
+    # WhatsApp audio messages don't support captions, so send as follow-up text
+    if caption and caption.strip():
+        await send_message(to=to, body=caption)
+
+    return {"message_id": message_id, "status": "sent", "to": phone}
 
 
 async def send_product_message(

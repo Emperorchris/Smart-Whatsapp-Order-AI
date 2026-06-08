@@ -6,24 +6,22 @@ from fastapi import APIRouter, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 
 from ...core.dependencies import DBSession
-from ...services import analytics_service, auth_service, product_service
+from ...services import analytics_service, product_service
+from ...services.auth_service import CurrentStaff, AdminOnly
 from ...db.schemas import analytics_schema, product_schema
 
 analytics_router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 
 @analytics_router.get("/dashboard", response_model=analytics_schema.DashboardKPIResponse)
-async def get_dashboard_kpis(
-    db: DBSession,
-    # _: auth_service.CurrentStaff,
-):
+async def get_dashboard_kpis(db: DBSession, _: CurrentStaff):
     return await analytics_service.get_dashboard_kpis(db)
 
 
 @analytics_router.get("/revenue", response_model=analytics_schema.RevenueByPeriodResponse)
 async def get_revenue(
     db: DBSession,
-    # _: auth_service.AdminOnly,
+    _: AdminOnly,
     period: str = Query("month", pattern="^(day|week|month|year)$"),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
@@ -34,7 +32,7 @@ async def get_revenue(
 @analytics_router.get("/top-products", response_model=analytics_schema.TopProductsResponse)
 async def get_top_products(
     db: DBSession,
-    # _: auth_service.AdminOnly,
+    _: AdminOnly,
     limit: int = Query(10, ge=1, le=50),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
@@ -45,7 +43,7 @@ async def get_top_products(
 @analytics_router.get("/top-customers", response_model=analytics_schema.TopCustomersResponse)
 async def get_top_customers(
     db: DBSession,
-    # _: auth_service.AdminOnly,
+    _: AdminOnly,
     limit: int = Query(10, ge=1, le=50),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
@@ -56,7 +54,7 @@ async def get_top_customers(
 @analytics_router.get("/conversion-rate", response_model=analytics_schema.ConversionRateResponse)
 async def get_conversion_rate(
     db: DBSession,
-    # _: auth_service.AdminOnly,
+    _: AdminOnly,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
 ):
@@ -66,7 +64,7 @@ async def get_conversion_rate(
 @analytics_router.get("/orders/export")
 async def export_orders(
     db: DBSession,
-    # _: auth_service.AdminOnly,
+    _: AdminOnly,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     status: Optional[str] = None,
@@ -85,7 +83,7 @@ async def export_orders(
 # ── Inventory Alerts ────────────────────────────────────────────
 
 @analytics_router.get("/inventory/low-stock", response_model=analytics_schema.LowStockResponse)
-async def get_low_stock(db: DBSession):
+async def get_low_stock(db: DBSession, _: CurrentStaff):
     return await analytics_service.get_low_stock_items(db)
 
 
@@ -94,6 +92,7 @@ async def get_low_stock(db: DBSession):
 @analytics_router.get("/payments/reconciliation", response_model=analytics_schema.PaymentReconciliationResponse)
 async def get_payment_reconciliation(
     db: DBSession,
+    _: AdminOnly,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
 ):
@@ -105,6 +104,7 @@ async def get_payment_reconciliation(
 @analytics_router.get("/staff/performance", response_model=analytics_schema.StaffPerformanceResponse)
 async def get_staff_performance(
     db: DBSession,
+    _: AdminOnly,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
 ):
@@ -116,6 +116,7 @@ async def get_staff_performance(
 @analytics_router.get("/customers/by-spend", response_model=analytics_schema.PaginatedCustomerSpendResponse)
 async def get_customers_by_spend(
     db: DBSession,
+    _: AdminOnly,
     min_spent: Optional[Decimal] = None,
     min_orders: Optional[int] = None,
     segment: Optional[str] = None,
@@ -131,7 +132,7 @@ async def get_customers_by_spend(
 # ── Product Export ──────────────────────────────────────────────
 
 @analytics_router.get("/products/export")
-async def export_products(db: DBSession):
+async def export_products(db: DBSession, _: AdminOnly):
     products = await analytics_service.get_products_for_export(db)
     buffer = analytics_service.generate_products_csv(products)
 
@@ -144,7 +145,7 @@ async def export_products(db: DBSession):
 
 
 @analytics_router.post("/products/import")
-async def import_products(db: DBSession, file: UploadFile = File(...)):
+async def import_products(db: DBSession, _: AdminOnly, file: UploadFile = File(...)):
     content = (await file.read()).decode("utf-8")
     rows = analytics_service.parse_products_csv(content)
 
@@ -162,6 +163,7 @@ async def import_products(db: DBSession, file: UploadFile = File(...)):
 @analytics_router.post("/refund", response_model=analytics_schema.RefundResponse)
 async def process_refund(
     db: DBSession,
+    _: AdminOnly,
     refund: analytics_schema.RefundRequest,
 ):
     return await analytics_service.process_refund(db, refund)

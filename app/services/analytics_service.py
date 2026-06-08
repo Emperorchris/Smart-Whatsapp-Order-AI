@@ -18,6 +18,7 @@ from ..db.model.payment_model import Payment
 from ..db.model.human_hand_off_model import HumanHandOff
 from ..db.model.staff_model import Staff
 from ..db.schemas import analytics_schema
+from . import websocket_service
 
 
 def _utc_now() -> datetime:
@@ -40,6 +41,7 @@ async def get_revenue_by_period(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> analytics_schema.RevenueByPeriodResponse:
+    """Return aggregated revenue and order counts grouped by the given time period."""
     trunc = func.date_trunc(period, Order.created_at)
 
     query = (
@@ -85,6 +87,7 @@ async def get_top_products(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> analytics_schema.TopProductsResponse:
+    """Return the top-selling products ranked by revenue."""
     query = (
         select(
             OrderItem.product_id,
@@ -127,6 +130,7 @@ async def get_top_customers(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> analytics_schema.TopCustomersResponse:
+    """Return the highest-spending customers ranked by total amount spent."""
     query = (
         select(
             Customer.id.label("customer_id"),
@@ -170,6 +174,7 @@ async def get_conversion_rate(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> analytics_schema.ConversionRateResponse:
+    """Calculate the cart-to-order conversion rate for the given date range."""
     cart_q = select(func.count(distinct(Cart.id)))
     order_q = select(func.count(distinct(Order.id))).where(
         Order.status != utils.OrderStatus.CANCELLED.value
@@ -201,6 +206,7 @@ async def get_conversion_rate(
 # ── Dashboard KPIs ──────────────────────────────────────────────
 
 async def get_dashboard_kpis(db: AsyncSession) -> analytics_schema.DashboardKPIResponse:
+    """Return key performance indicators for the admin dashboard."""
     today = _today_start()
     month = _month_start()
 
@@ -264,6 +270,7 @@ async def get_orders_for_export(
     end_date: date | None = None,
     status: str | None = None,
 ) -> list[Order]:
+    """Fetch orders matching the given filters for CSV export."""
     query = select(Order).order_by(Order.created_at.desc())
 
     if start_date:
@@ -309,6 +316,7 @@ def generate_orders_csv(orders: list[Order]) -> io.StringIO:
 # ── Inventory Alerts ────────────────────────────────────────────
 
 async def get_low_stock_items(db: AsyncSession) -> analytics_schema.LowStockResponse:
+    """Return inventory items at or below their low-stock threshold."""
     query = (
         select(
             Inventory.id.label("inventory_id"),
@@ -335,11 +343,36 @@ async def get_low_stock_items(db: AsyncSession) -> analytics_schema.LowStockResp
         for r in rows
     ]
 
-    return analytics_schema.LowStockResponse(
+    response = analytics_schema.LowStockResponse(
         items=items,
         total_low_stock=len(items),
         total_out_of_stock=sum(1 for i in items if i.quantity_available == 0),
     )
+
+    # Broadcast low-stock alert when low items are detected
+    if response.total_low_stock > 0:
+        try:
+            await websocket_service.broadcast(
+                utils.WebSocketEvent.LOW_STOCK_ALERT.value,
+                {
+                    "total_low_stock": response.total_low_stock,
+                    "total_out_of_stock": response.total_out_of_stock,
+                    "items": [
+                        {
+                            "inventory_id": str(i.inventory_id),
+                            "product_id": str(i.product_id),
+                            "product_name": i.product_name,
+                            "quantity_available": i.quantity_available,
+                            "low_stock_threshold": i.low_stock_threshold,
+                        }
+                        for i in response.items
+                    ],
+                },
+            )
+        except Exception:
+            pass
+
+    return response
 
 
 # ── Payment Reconciliation ──────────────────────────────────────
@@ -349,6 +382,7 @@ async def get_payment_reconciliation(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> analytics_schema.PaymentReconciliationResponse:
+    """Return unpaid vs. paid order totals for payment reconciliation."""
     base_filter = [Order.status != utils.OrderStatus.CANCELLED.value]
     if start_date:
         base_filter.append(Order.created_at >= datetime.combine(start_date, datetime.min.time()))
@@ -410,6 +444,7 @@ async def get_staff_performance(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> analytics_schema.StaffPerformanceResponse:
+    """Return handoff counts and average resolution times per staff member."""
     filters = []
     if start_date:
         filters.append(HumanHandOff.created_at >= datetime.combine(start_date, datetime.min.time()))
@@ -469,6 +504,7 @@ async def get_customers_by_spend(
     page: int = 1,
     page_size: int = 20,
 ) -> analytics_schema.PaginatedCustomerSpendResponse:
+    """Return a paginated list of customers filtered and sorted by spend or order count."""
     base = (
         select(
             Customer.id.label("customer_id"),
@@ -527,6 +563,7 @@ async def get_customers_by_spend(
 # ── Product Export ──────────────────────────────────────────────
 
 async def get_products_for_export(db: AsyncSession) -> list[Product]:
+    """Fetch all products ordered by creation date for CSV export."""
     result = await db.execute(select(Product).order_by(Product.created_at.desc()))
     return list(result.scalars().all())
 
@@ -576,6 +613,7 @@ async def process_refund(
     db: AsyncSession,
     refund: analytics_schema.RefundRequest,
 ) -> analytics_schema.RefundResponse:
+    """Process a full or partial refund for an order and record the payment."""
     result = await db.execute(select(Order).where(Order.id == refund.order_id))
     order = result.scalars().first()
 

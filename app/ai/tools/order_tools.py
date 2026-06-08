@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 from ...db.model.order_model import Order
+from ...db.model.customer_model import Customer as CustomerModel
 from ...services import (
     order_service,
     product_service,
@@ -13,6 +14,7 @@ from ...services import (
     customer_address_service,
     whatsapp_service,
     bank_account_service,
+    websocket_service,
 )
 from ...services.product_variant_service import get_variant_by_id
 from ...db.schemas import order_schema, order_item_schema, customer_address_schema
@@ -38,6 +40,15 @@ async def place_order(
     except Exception:
         return "Customer not found"
 
+    # First-time order: ask for full name if not yet confirmed
+    existing_orders = await order_service.get_orders_by_customer_id(db, customer_id)
+    metadata = customer.extra_metadata or {}
+    if not existing_orders and not metadata.get("name_confirmed"):
+        return (
+            "Since this is your first order, I need your full name for delivery. "
+            "Please send me your full name."
+        )
+
     try:
         cart = await cart_service.get_cart_by_customer_id(db, customer_id)
     except Exception:
@@ -56,6 +67,8 @@ async def place_order(
             address = await customer_address_service.get_address_by_id(
                 db, customer_address_id
             )
+            if str(address.customer_id) != str(customer_id):
+                return "That address was not found. Please provide a valid address."
         except Exception:
             return "That address was not found. Please provide a valid address."
     else:
@@ -87,6 +100,7 @@ async def place_order(
                     "description": "Enter a new delivery address",
                 }
             )
+            sent = False
             try:
                 await whatsapp_service.send_interactive_list(
                     to=customer_phone,
@@ -95,12 +109,17 @@ async def place_order(
                     sections=[{"title": "Saved Addresses", "rows": rows}],
                     header="Delivery Address",
                 )
+                sent = True
+                logger.info("place_order: saved address list sent successfully")
             except Exception as exc:
                 logger.error("place_order: FAILED to send address list — {}", exc)
-            return (
-                "I've sent the customer their saved addresses to pick from. "
-                "Wait for their selection before proceeding."
-            )
+
+            if sent:
+                return (
+                    "[INTERACTIVE_SENT] Saved address list sent to customer. "
+                    "Do NOT send any additional text. Wait silently for their selection."
+                )
+            # Fall through if send failed — ask manually
         elif addresses:
             lines = []
             for i, addr in enumerate(addresses, 1):
@@ -115,7 +134,7 @@ async def place_order(
             )
 
         # No saved addresses — send interactive list to collect address type
-        logger.info("place_order: customer_phone from config = {!r}", customer_phone)
+        logger.info("place_order: no saved addresses, customer_phone={!r}", customer_phone)
         if customer_phone:
             labels = [member for member in utils.AddressLabel]
             sections = [
@@ -130,26 +149,37 @@ async def place_order(
                     ],
                 }
             ]
+            sent = False
             try:
                 await whatsapp_service.send_interactive_list(
                     to=customer_phone,
-                    body="You need a delivery address to place your order. What type of address is this?",
+                    body="To place your order I need your delivery address. What type of address is it?",
                     button_text="Select type",
                     sections=sections,
                     header="Delivery Address",
                     footer="Step 1 of 2",
                 )
-                logger.info("place_order: interactive list sent successfully")
+                sent = True
+                logger.info("place_order: address type picker sent successfully")
             except Exception as exc:
-                logger.error("place_order: FAILED to send interactive list — {}", exc)
-            return (
-                "I've sent the customer an interactive list to pick their address type. "
-                "Wait for their selection, then ask for the full address details: street address, city, state, and a landmark."
-            )
+                logger.error("place_order: FAILED to send address type picker — {}", exc)
 
-        return "Please provide a delivery address before I can place your order. Send me your street address, city, state, and a landmark if any."
+            if sent:
+                return (
+                    "[INTERACTIVE_SENT] Address type picker sent to customer. "
+                    "Do NOT send any additional text. Wait silently for their selection."
+                )
+            # Fall through to text prompt if send failed
+        return (
+            "You don't have a saved delivery address yet. "
+            "Please tell me your address details: street address, city, state, and a nearby landmark."
+        )
 
-    # Check stock
+    # Validate quantities and check stock
+    invalid_items = [i for i in cart_items if not i.quantity or i.quantity < 1]
+    if invalid_items:
+        return "Some items in your cart have invalid quantities. Please update your cart and try again."
+
     stock_issues = []
     for item in cart_items:
         if item.variant_id:
@@ -250,9 +280,43 @@ async def place_order(
                     variant_record.inventory_quantity = max(
                         0, variant_record.inventory_quantity - item.quantity
                     )
+                    # Broadcast low stock alert if variant hits threshold
+                    threshold = variant_record.low_stock_threshold or 5
+                    if variant_record.inventory_quantity <= threshold:
+                        try:
+                            product_name = ""
+                            try:
+                                _p = await product_service.get_product_by_id(db, str(variant_record.product_id))
+                                product_name = _p.name
+                            except Exception:
+                                pass
+                            await websocket_service.broadcast(
+                                utils.WebSocketEvent.LOW_STOCK_ALERT.value,
+                                {
+                                    "variant_id": str(variant_record.id),
+                                    "product_id": str(variant_record.product_id),
+                                    "product_name": product_name,
+                                    "attributes": variant_record.attributes,
+                                    "inventory_quantity": variant_record.inventory_quantity,
+                                    "low_stock_threshold": threshold,
+                                },
+                            )
+                        except Exception:
+                            pass
 
         await db.commit()
         await cart_service.delete_cart(db, cart.id)
+
+        try:
+            await websocket_service.broadcast(utils.WebSocketEvent.NEW_ORDER.value, {
+                "order_id": str(order.id),
+                "order_number": order_number,
+                "customer_name": customer.name,
+                "total_amount": float(total_amount),
+                "items_count": len(cart_items),
+            })
+        except Exception:
+            pass
 
         delivery_display = f"{address.address_line}, {address.city}, {address.state}"
         if address.landmark:
@@ -411,6 +475,8 @@ async def update_order_address(
             address = await customer_address_service.get_address_by_id(
                 db, new_address_id
             )
+            if str(address.customer_id) != str(customer_id):
+                return "That address was not found."
         except Exception:
             return "That address was not found."
     else:
@@ -433,6 +499,7 @@ async def update_order_address(
                 "title": "Add new address",
                 "description": "Enter a new delivery address",
             })
+            sent = False
             try:
                 await whatsapp_service.send_interactive_list(
                     to=customer_phone,
@@ -441,11 +508,16 @@ async def update_order_address(
                     sections=[{"title": "Saved Addresses", "rows": rows}],
                     header="Change Address",
                 )
+                sent = True
+                logger.info("update_order_address: address list sent successfully")
             except Exception as exc:
                 logger.error("update_order_address: FAILED to send address list — {}", exc)
-            return (
-                "I've sent the address options. Wait for the customer to pick one."
-            )
+
+            if sent:
+                return (
+                    "[INTERACTIVE_SENT] Address picker sent to customer. "
+                    "Do NOT send any additional text. Wait silently for their selection."
+                )
         elif addresses:
             lines = []
             for i, addr in enumerate(addresses, 1):
@@ -528,20 +600,49 @@ async def check_order_status(config: RunnableConfig, order_number: str = None) -
     return f"Sent {len(orders)} order(s) to the customer."
 
 
+STATUS_EMOJI = {
+    "pending": "🕐", "paid": "💰", "shipped": "🚚",
+    "delivered": "✅", "cancelled": "❌",
+}
+
+TIMELINE_STEPS = ["pending", "paid", "shipped", "delivered"]
+
+
 async def _send_order_card(order, customer_phone: str | None):
-    """Send a single order as a WhatsApp card with items and optional Change Address button."""
+    """Send a single order as a WhatsApp card with emoji timeline, items, tracking info, and context-dependent buttons."""
+    emoji = STATUS_EMOJI.get(order.status, "📦")
+
     body = (
         f"*Order {order.order_number}*\n"
-        f"Status: *{order.status}*  |  Payment: *{order.payment_status}*\n"
+        f"{emoji} Status: *{order.status.upper()}*  |  Payment: *{order.payment_status}*\n"
         f"Total: *NGN {order.total_amount:,.2f}*"
     )
 
+    # Timeline bar
+    if order.status != "cancelled":
+        step_index = TIMELINE_STEPS.index(order.status) if order.status in TIMELINE_STEPS else -1
+        timeline = " → ".join(
+            f"✅ {s.capitalize()}" if i <= step_index else f"⬜ {s.capitalize()}"
+            for i, s in enumerate(TIMELINE_STEPS)
+        )
+        body += f"\n\n{timeline}"
+    else:
+        body += "\n\n❌ Order Cancelled"
+
+    # Tracking info
+    if order.status in ("shipped", "delivered"):
+        body += f"\n\n🔍 Tracking ID: *{order.order_number}*"
+    if getattr(order, "estimated_delivery_date", None):
+        body += f"\n📅 Est. Delivery: *{order.estimated_delivery_date.strftime('%a %d %b %Y')}*"
+
+    # Address
     if order.address_line:
         delivery = f"{order.address_line}, {order.address_city}, {order.address_state}"
         if order.address_landmark:
             delivery += f" (Landmark: {order.address_landmark})"
-        body += f"\nDelivery: {delivery}"
+        body += f"\n📍 Delivery: {delivery}"
 
+    # Items with per-item delivery status
     if order.order_items:
         body += "\n\n*Items:*"
         for item in order.order_items:
@@ -549,31 +650,34 @@ async def _send_order_card(order, customer_phone: str | None):
             if item.product_variant_attributes:
                 attrs = ", ".join(str(v) for v in item.product_variant_attributes.values())
                 name += f" ({attrs})"
-            body += f"\n• {item.quantity} unit(s) of {name} — NGN {item.subtotal:,.2f}"
+            item_line = f"\n• {item.quantity} unit(s) of {name} — NGN {item.subtotal:,.2f}"
+            # Show per-item status during partial shipments
+            if order.status == "shipped" and item.delivery_status:
+                item_emoji = STATUS_EMOJI.get(item.delivery_status, "")
+                item_line += f" [{item_emoji} {item.delivery_status}]"
+            body += item_line
 
     if not customer_phone:
         return
 
-    # Pending/paid orders get a Change Address button
-    can_change = order.status in [
-        utils.OrderStatus.PENDING.value,
-        utils.OrderStatus.PAID.value,
-    ]
+    # Context-dependent buttons (max 3)
+    buttons = []
+    if order.status in (utils.OrderStatus.PENDING.value, utils.OrderStatus.PAID.value):
+        buttons.append({"id": f"chgaddr|{order.order_number}", "title": "Change Address"})
+        buttons.append({"id": f"cancel|{order.order_number}", "title": "Cancel Order"})
+    elif order.status == utils.OrderStatus.SHIPPED.value:
+        buttons.append({"id": f"track|{order.order_number}", "title": "Track Again"})
 
-    if can_change:
+    if buttons:
         try:
             await whatsapp_service.send_interactive_buttons(
-                to=customer_phone,
-                body=body,
-                buttons=[
-                    {"id": f"chgaddr|{order.order_number}", "title": "Change Address"},
-                ],
+                to=customer_phone, body=body, buttons=buttons,
             )
             return
         except Exception as exc:
             logger.error("_send_order_card: button send failed — {}", exc)
 
-    # Fallback or non-changeable orders: plain text
+    # Fallback: plain text
     try:
         await whatsapp_service.send_message(to=customer_phone, body=body)
     except Exception as exc:
@@ -603,10 +707,36 @@ async def cancel_order(config: RunnableConfig, order_number: str) -> str:
     return f"Order {order_number} has been cancelled successfully."
 
 
+@tool
+async def update_my_name(config: RunnableConfig, full_name: str) -> str:
+    """Update the customer's full name. Call this when a first-time customer provides their name before placing an order.
+    Args:
+        full_name: The customer's full name as they provided it."""
+
+    db: AsyncSession = config["configurable"]["db"]
+    customer_id = config["configurable"]["customer_id"]
+
+    result = await db.execute(select(CustomerModel).where(CustomerModel.id == customer_id))
+    cust = result.scalars().first()
+    if not cust:
+        return "Customer not found."
+
+    cust.name = full_name
+    # Create a NEW dict — reassigning the same object reference won't be detected by SQLAlchemy
+    cust.extra_metadata = {**(cust.extra_metadata or {}), "name_confirmed": True}
+
+    await db.commit()
+    # Expire all cached objects so the next query (e.g. place_order in the same session) gets fresh data
+    db.expire_all()
+    logger.info("update_my_name: customer={} name updated to {!r}", customer_id, full_name)
+    return f"Name updated to *{full_name}*. You can now proceed with your order."
+
+
 order_tools = [
     place_order,
     make_payment,
     update_order_address,
     check_order_status,
     cancel_order,
+    update_my_name,
 ]

@@ -40,8 +40,10 @@ async def get_inventory_by_id(db: AsyncSession, inventory_id: str) -> inventory_
     return inventory_schema.InventoryResponse.model_validate(inventory)
 
 
-async def get_all_inventory(db: AsyncSession) -> list[inventory_schema.InventoryResponse]:
-    result = await db.execute(select(inventory_model.Inventory))
+async def get_all_inventory(db: AsyncSession, skip: int = 0, limit: int = 50) -> list[inventory_schema.InventoryResponse]:
+    result = await db.execute(
+        select(inventory_model.Inventory).offset(skip).limit(limit)
+    )
     items = result.scalars().all()
     return [inventory_schema.InventoryResponse.model_validate(i) for i in items]
 

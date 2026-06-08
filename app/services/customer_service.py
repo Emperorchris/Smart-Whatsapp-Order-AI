@@ -2,8 +2,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.schemas import customers_schema
-from ..core import exceptions
+from ..core import exceptions, utils
 from ..db.model import customer_model
+from . import websocket_service
 
 
 async def create_customer(db: AsyncSession, customer_data: customers_schema.CustomerSchema) -> customers_schema.CustomerResponse:
@@ -19,7 +20,24 @@ async def create_customer(db: AsyncSession, customer_data: customers_schema.Cust
     await db.commit()
     await db.refresh(new_customer)
 
-    return customers_schema.CustomerResponse.model_validate(new_customer)
+    response = customers_schema.CustomerResponse.model_validate(new_customer)
+
+    # Broadcast new customer to dashboard
+    try:
+        await websocket_service.broadcast(
+            utils.WebSocketEvent.NEW_CUSTOMER.value,
+            {
+                "customer_id": str(response.id),
+                "name": response.name,
+                "display_name": response.display_name,
+                "whatsapp_number": response.whatsapp_number,
+                "created_at": response.created_at.isoformat() if response.created_at else None,
+            },
+        )
+    except Exception:
+        pass
+
+    return response
 
 
 async def get_all_customers(db: AsyncSession, skip: int = 0, limit: int = 50) -> list[customers_schema.CustomerResponse]:

@@ -23,6 +23,7 @@ CHURN_DAYS = 90
 
 
 async def auto_segment_customers(db: AsyncSession) -> dict:
+    """Re-classify all customers into segments (new, returning, vip, churned) based on order history."""
     now = datetime.now(tz=timezone.utc).replace(tzinfo=None)
 
     # Aggregate per customer
@@ -64,6 +65,7 @@ async def auto_segment_customers(db: AsyncSession) -> dict:
 
 
 async def get_segment_summary(db: AsyncSession) -> list[dict]:
+    """Return customer counts grouped by segment."""
     query = (
         select(
             Customer.customer_segment.label("segment"),
@@ -82,6 +84,7 @@ async def get_customers_by_segment(
     page: int = 1,
     page_size: int = 20,
 ) -> dict:
+    """Return a paginated list of customers belonging to the specified segment."""
     base = select(Customer).where(Customer.customer_segment == segment)
     count_q = select(func.count(Customer.id)).where(Customer.customer_segment == segment)
 
